@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Testing / coverage
+coverage/
+
+# Build output
+dist/
+build/
+
+# Editor/OS
+.DS_Store
+.vscode/
+.idea/
+
+# Uploaded/local files (S3 uploads should never be stored locally)
+uploads/
+tmp/
