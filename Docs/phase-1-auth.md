@@ -1,33 +1,39 @@
 # Phase 1 — Authentication & Role-Based Access
 
 ## Goal
-Enable secure login/logout for all three user roles (Student, Owner, Super-Admin), each with distinct access permissions.
+Enable secure login/logout for all three roles (Student, Owner, Super-Admin), each with distinct, isolated access.
 
-## Context for the Implementer
-Students authenticate via phone number + OTP (no password). Owners and Super-Admins authenticate via email/password. All three roles must be strictly isolated — an endpoint accessible to one role must not be accessible to another unless explicitly designed to be shared.
+## Context
+Students authenticate via phone + OTP (no password). Owners and Super-Admins authenticate via email/password. Role isolation and ownership-scoping (an owner only ever accessing their own data) are established here and used by every later module.
 
-## Steps
+## Folders & Files to Create This Phase
 
-1. **Design the authentication data model.** Decide whether to use a single unified auth collection with a `role` field, or separate collections per role linked to a shared auth identity — document the decision and reasoning.
+```
+src/modules/auth/
+├── auth.routes           → Endpoints: register, login, refresh token, logout, password reset (owner/admin), request-OTP, verify-OTP (student)
+├── auth.controller        → Handles incoming requests, calls auth.service
+├── auth.service            → Core auth logic: token issuing, credential checks, session handling
+├── auth.middleware          → Role-guard middleware used by every other module going forward (student-only / owner-only / super-admin-only / shared)
+└── otp.service              → OTP generation, expiry, verification, rate-limiting for student phone login
+```
 
-2. **Build phone + OTP authentication flow for students**: request OTP, verify OTP, issue session/token on success. Include OTP expiry and rate-limiting to prevent abuse.
+*(Ownership-scoping logic — e.g., "owner can only access their own buildings" — is implemented as a reusable pattern inside `auth.middleware` or a shared helper it exposes, since every later module will call into it.)*
 
-3. **Build email/password authentication flow for Owners and Super-Admins**: registration (likely admin-invited or manually provisioned for owners), login, password hashing and storage best practices.
+## Implementation Steps
 
-4. **Implement JWT-based session management**: access token + refresh token pattern, with reasonable expiry times for each role.
-
-5. **Build role-guard middleware** that every protected endpoint in every future module will use to restrict access by role (student-only, owner-only, super-admin-only, or shared).
-
-6. **Build ownership-scoping logic**: beyond role checks, an Owner must only be able to access data (buildings, students, requests) tied to their own account — never another owner's data. This is a critical multi-tenancy rule that applies to every module going forward.
-
-7. **Build logout/session invalidation** for all roles.
-
-8. **Build password reset flow** for Owners and Super-Admins (email-based).
-
-9. **Test role isolation explicitly**: verify a student token cannot access owner endpoints, an owner token cannot access another owner's data, and only super-admin tokens can access admin-level endpoints.
+1. Decide and document the auth data model approach: one unified auth collection with a `role` field, or separate collections per role linked to a shared identity.
+2. Build `otp.service`: generate OTP, send it (placeholder for actual SMS provider), verify it, expire it after a defined window, rate-limit repeated requests.
+3. Build the student login flow in `auth.service`/`auth.controller`: request OTP → verify OTP → issue tokens.
+4. Build the owner/super-admin login flow: email + password, with proper password hashing (e.g., bcrypt) — never store plaintext passwords.
+5. Implement JWT access + refresh token issuing and validation in `auth.service`.
+6. Build `auth.middleware` role-guard functions that every future module's routes will use to restrict access by role.
+7. Build the ownership-scoping helper (e.g., a function/middleware that checks a requested resource belongs to the authenticated owner) — document this clearly since every owner-facing module from Phase 3 onward depends on it.
+8. Build logout/session invalidation.
+9. Build password reset flow for owners/super-admins (email-based).
+10. Write tests confirming: a student token cannot hit owner-only routes, an owner token cannot access another owner's data, only super-admin tokens reach admin routes.
 
 ## Deliverable
-All three roles can register/log in, receive valid session tokens, and are correctly restricted to only the data and endpoints appropriate to their role — with ownership-scoping enforced for Owners specifically.
+All three roles can authenticate, receive valid tokens, and are correctly restricted by role and ownership — verified with explicit isolation tests.
 
 ## Dependency Note
-Every module from Phase 2 onward will use the role-guard middleware and ownership-scoping logic built here. Any gaps in isolation discovered later will require revisiting every module that depends on this phase, so testing role isolation thoroughly now is critical.
+Every module from Phase 2 onward imports `auth.middleware` for route protection and the ownership-scoping helper for data isolation. Any gap discovered later means revisiting every dependent module, so test this phase thoroughly before proceeding.

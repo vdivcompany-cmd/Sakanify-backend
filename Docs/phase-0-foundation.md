@@ -1,42 +1,60 @@
 # Phase 0 — Foundation
 
 ## Goal
-Establish the architectural foundation that every later phase will build on. No business features are implemented in this phase — only the scaffolding, configuration, and shared infrastructure.
+Establish the architectural foundation that every later phase will build on. No business features are implemented in this phase — only scaffolding, configuration, and shared infrastructure.
 
-## Context for the Implementer
-This is a **modular monolith** backend for a student housing SaaS platform. Three user roles exist: Student, Owner (Landlord), and Super-Admin. All later modules (students, beds, requests, payments, etc.) will be organized as self-contained folders under a `modules/` directory, each with its own routes, controller, service, and model files.
+## Context
+This is a **modular monolith** backend for a student housing SaaS platform. Three roles exist: Student, Owner, Super-Admin. All feature modules live under `src/modules/`, each self-contained with its own routes/controller/service/model.
 
-## Steps
+## Folders & Files to Create This Phase
 
-1. **Initialize the project repository** with a modular folder structure separating `config/`, `modules/`, and `shared/` concerns. Do not put business logic directly in the app entry file.
+```
+sakanify-backend/
+├── src/
+│   ├── config/
+│   │   ├── database.config           → MongoDB connection setup (host, retries, error handling)
+│   │   ├── env.config                → Loads and validates all required environment variables at startup
+│   │   ├── storage.config            → S3-compatible bucket connection settings (used later for uploads)
+│   │   └── constants.config          → Shared enums: roles (student/owner/super-admin), bed status values, payment status values, request status values
+│   │
+│   ├── shared/
+│   │   ├── middlewares/
+│   │   │   ├── error-handler.middleware   → Catches errors from any module, returns standardized error response
+│   │   │   ├── request-logger.middleware  → Basic operational logging (not the detailed audit log)
+│   │   │   └── rate-limiter.middleware    → Basic abuse protection
+│   │   ├── utils/
+│   │   │   ├── date.util             → Shared date helpers
+│   │   │   ├── response.util         → Standardized API success/error response shape used by every module
+│   │   │   └── file-upload.util      → Shared file upload handling logic (used by kyc/students modules later)
+│   │   └── jobs/
+│   │       └── scheduler.core        → Central job/queue engine (Redis + Bull, or node-cron) — empty of actual jobs for now
+│   │
+│   ├── app.entry                     → Boots express/fastify app, mounts middlewares, will mount module routers as they're added
+│   └── server.entry                  → Starts the process, connects to DB, starts listening
+│
+├── tests/
+│   └── unit/                         → Placeholder, mirrors modules/ as they're added
+│
+└── .env.example                      → Template of all required environment variables
+```
 
-2. **Set up the database connection layer.** Configure MongoDB connection handling that works across dev, staging, and production environments, with proper connection error handling and retry logic.
+## Implementation Steps
 
-3. **Set up environment variable management.** Create a centralized environment loader/validator that fails fast at startup if required variables are missing, rather than failing silently later.
-
-4. **Define shared constants and enums** that will be used across multiple modules: user roles (student/owner/super-admin), bed status values (available/requested/confirmed/vacating), payment status values (pending/rented, per the decision made in Phase 5), and request status values.
-
-5. **Establish the role-based access control pattern** at the foundation level (the actual auth logic comes in Phase 1, but the constants, role definitions, and access-control conventions should be decided now so every later module follows the same pattern).
-
-6. **Build a standardized API response format** (success/error response shapes) used consistently across every endpoint in every module, so the future frontend only ever needs to handle one response shape.
-
-7. **Build centralized error-handling middleware** that catches errors from any module and returns them in the standardized format from step 6.
-
-8. **Set up basic request logging middleware** (separate from the detailed audit logging that comes in later phases — this is just operational/debug logging).
-
-9. **Set up file storage configuration** for future use (ID photos, profile photos) pointing to an S3-compatible bucket — configure the connection now even though the actual upload logic is built in Phase 2.
-
-10. **Set up the shared job/scheduler infrastructure** (a single scheduling engine, e.g., using Redis + a queue library or node-cron) that later phases will plug into for scheduled tasks like request expiry and payment rollover. Build the engine itself now; specific jobs are added in later phases.
-
-11. **Write basic health-check and environment-verification endpoints** to confirm the server, database, and storage connections are all working correctly.
+1. Initialize the repo with the folder structure above. Do not put business logic in `app.entry` or `server.entry` — they only assemble and boot.
+2. Implement `database.config` with connection handling that works across dev/staging/production and retries on failure.
+3. Implement `env.config` to fail fast at startup if required env vars are missing.
+4. Implement `constants.config` with all shared enums other modules will import (roles, bed statuses, payment statuses, request statuses).
+5. Implement `response.util` — a single consistent shape for every API response (success and error) across the whole project.
+6. Implement `error-handler.middleware` using that response shape.
+7. Implement `request-logger.middleware` for basic request/response logging.
+8. Implement `storage.config` — connect to the storage bucket now, even though upload logic is built in Phase 2.
+9. Implement `scheduler.core` — the single scheduling engine that Phase 4 (request expiry) and Phase 5 (payment rollover) will register jobs into later.
+10. Implement `file-upload.util` as a shared helper (actual usage starts in Phase 2).
+11. Wire `app.entry` to load middlewares and be ready to mount future module routers.
+12. Add a health-check endpoint verifying server, DB, and storage connections.
 
 ## Deliverable
-A running server, connected to the database, with:
-- A defined modular folder structure ready to receive feature modules
-- Standardized error handling and response format
-- Role/constants definitions in place
-- A working job scheduler engine (empty of actual jobs)
-- No business features implemented yet
+A running server, connected to MongoDB, with standardized error handling/response format, shared constants, and a working (empty) job scheduler — no business features yet.
 
 ## Dependency Note
-Every subsequent phase depends on this phase's conventions (response format, error handling, role constants, scheduler engine) being finalized first. Do not proceed to Phase 1 until these conventions are agreed upon, since changing them later means touching every module.
+Every later phase imports from `config/` and `shared/` built here. Do not change these conventions once Phase 1 begins — changes here ripple through every module.

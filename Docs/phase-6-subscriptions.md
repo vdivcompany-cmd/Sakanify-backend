@@ -1,27 +1,32 @@
 # Phase 6 — Owner Subscriptions & Bed Capacity
 
 ## Goal
-Track each Owner's subscription tier (how many beds/buildings they're allowed to manage) and support requests to expand that capacity.
+Track each Owner's subscription tier (allowed bed/building capacity) and support requests to expand it.
 
-## Context for the Implementer
-Sakanify's business model is tiered by bed capacity (e.g., "50-bed package" at a given monthly price). This module tracks each owner's current tier and actual usage, and provides the request pathway for owners to ask for more capacity — which the Super-Admin module (Phase 7) will approve or reject.
+## Context
+Sakanify's business model is tiered by bed capacity (e.g., "50-bed package" at a set monthly price). This module tracks current tier and usage, and the request pathway for expansion, which Phase 7 (Super-Admin) approves or rejects.
 
-## Steps
+## Folders & Files to Create This Phase
 
-1. **Build the Subscription model**: owner reference, current tier/package name, total bed capacity allowed, monthly price, subscription status (active/overdue/suspended), renewal date.
+```
+src/modules/subscriptions/
+├── subscription.routes        → Get current subscription/usage, request expansion
+├── subscription.controller
+├── subscription.service         → Usage calculation, threshold warnings, expansion request creation
+└── subscription.model            → owner reference, tier/package name, total bed capacity, monthly price, status (active/overdue/suspended), renewal date
+```
 
-2. **Build usage calculation logic**: compare the owner's actual bed count (from Phase 3) against their subscription's allowed capacity, to determine current utilization (e.g., "48 of 50 beds used").
+## Implementation Steps
 
-3. **Build a warning threshold**: flag when an owner is approaching their capacity limit (e.g., 90%+ utilized), so this can surface as an alert in their dashboard later.
-
-4. **Build the "Request Bed Expansion" endpoint** for owners: submits a request specifying desired new capacity, which creates a record for the Super-Admin expansion queue (built in Phase 7).
-
-5. **Build subscription status transitions**: active, overdue (e.g., non-payment of the platform subscription itself, separate from tenant rent), suspended — and the business rules for what an owner can/cannot do in each state (e.g., a suspended owner may be blocked from adding new buildings or accepting new requests).
-
-6. **Ensure all subscription and capacity data ties back to the ownership-scoping rules from Phase 1** — an owner should only ever see and manage their own subscription.
+1. Build `subscription.model` with the fields above.
+2. Build usage calculation logic in `subscription.service`, comparing actual bed count (from Phase 3's `bed.service`) against the subscription's allowed capacity.
+3. Build a warning threshold (e.g., 90%+ utilized) to surface as a dashboard alert later.
+4. Build the "Request Bed Expansion" endpoint: creates a record consumed by the Super-Admin expansion queue (Phase 7).
+5. Build subscription status transitions (active/overdue/suspended) and the business rules tied to each (e.g., a suspended owner may be blocked from accepting new requests).
+6. Ensure all subscription data is scoped via the Phase 1 ownership helper — an owner only ever sees their own subscription.
 
 ## Deliverable
-Each owner has a tracked subscription tier with real usage data, can request capacity expansion, and the system enforces basic capacity-based rules.
+Each owner has a tracked subscription tier with real usage data, can request capacity expansion, and capacity-based rules are enforced.
 
 ## Dependency Note
-The expansion requests created here are consumed and approved/rejected in Phase 7's Super-Admin expansion queue — the request record structure should be designed with that downstream consumer in mind.
+Expansion requests created here are consumed in Phase 7's expansion queue — design the request record with that downstream consumer in mind.

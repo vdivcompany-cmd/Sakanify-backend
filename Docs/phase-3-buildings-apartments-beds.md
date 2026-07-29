@@ -1,31 +1,47 @@
 # Phase 3 — Buildings, Apartments, and Beds
 
 ## Goal
-Establish the property hierarchy structure (Building → Apartment → Bed) that the booking engine in Phase 4 will operate on.
+Establish the property hierarchy (Building → Apartment → Bed) that the booking engine (Phase 4) operates on.
 
-## Context for the Implementer
-Every bed must ultimately trace back to one apartment, which traces back to one building, which is owned by one owner. This hierarchy is the backbone of the entire booking system — get the relationships right here before Phase 4 begins.
+## Context
+Every bed traces to one apartment, which traces to one building, owned by one owner. Get these relationships and the bed-status logging right before Phase 4 begins.
 
-## Steps
+## Folders & Files to Create This Phase
 
-1. **Build the Building model**: name, owner reference (linking to the Owner from Phase 1), area/neighborhood (not "distance from university" — the system uses neighborhood/area-based location, per project decisions), address details.
+```
+src/modules/buildings/
+├── building.routes        → Create/edit/delete/list buildings (owner-scoped)
+├── building.controller
+├── building.service
+└── building.model          → name, area/neighborhood, owner reference
 
-2. **Build the Apartment model**: floor number, number of rooms, reference to parent Building.
+src/modules/apartments/
+├── apartment.routes        → Create/edit/delete/list apartments per building
+├── apartment.controller
+├── apartment.service
+└── apartment.model          → floor number, room count, building reference
 
-3. **Build the Bed model**: reference to parent Apartment (and room, if rooms are tracked as sub-units within an apartment), and a status field with these possible values: `available`, `requested`, `confirmed`, `vacating`.
+src/modules/beds/
+├── bed.routes               → Create/edit/delete/list beds per apartment; get nested building→apartment→bed structure
+├── bed.controller
+├── bed.service               → Occupancy calculation logic lives here; atomic locking logic is built out fully in Phase 4 but the status field itself is defined here
+├── bed.model                  → apartment reference, status (available/requested/confirmed/vacating)
+└── bed-history.service         → Append-only log of every status transition, with timestamp and actor (student/owner/system)
+```
 
-4. **Build a Bed History / status-log service**, separate from the Bed model itself, that records every status transition with a timestamp and the actor who triggered it (student, owner, or system/scheduled job). This log must never be overwritten — it is append-only and will later feed occupancy analytics and the AI assistant.
+## Implementation Steps
 
-5. **Build Owner-facing endpoints** to create/edit/delete Buildings, Apartments, and Beds — scoped so an owner can only manage their own buildings (enforcing the ownership-scoping rule from Phase 1).
-
-6. **Build read endpoints** that return the full nested structure (Building → its Apartments → their Beds) for an owner's dashboard view.
-
-7. **Build basic occupancy calculation logic**: given a building or apartment, calculate how many beds are occupied vs. total — this will be reused by the Subscription module (Phase 6) and Admin dashboards (Phase 7).
-
-8. **Test hierarchy integrity**: deleting or editing a building should correctly cascade or restrict actions on its child apartments/beds according to defined rules (e.g., prevent deleting a building that has active rentals).
+1. Build `building.model`: name, owner reference (from Phase 1), area/neighborhood (not distance-based), address details.
+2. Build `apartment.model`: floor, room count, reference to parent building.
+3. Build `bed.model`: reference to parent apartment (and room if tracked as a sub-unit), status field with the four defined values.
+4. Build `bed-history.service` as an append-only log, separate from `bed.model` itself — never overwrite entries.
+5. Build owner-facing CRUD endpoints for buildings/apartments/beds, scoped via the Phase 1 ownership helper so an owner only manages their own properties.
+6. Build a read endpoint returning the full nested structure (building → its apartments → their beds) for dashboard consumption.
+7. Build occupancy calculation logic in `bed.service` (occupied vs. total beds per building/apartment) — this will be reused by Subscriptions (Phase 6) and Admin (Phase 7).
+8. Test hierarchy integrity: deleting/editing a building correctly cascades or restricts based on defined rules (e.g., block deletion of a building with active rentals).
 
 ## Deliverable
-Owners can fully build out their property structure (buildings, apartments, beds) in the system, with every bed status change logged, and basic occupancy numbers available for later modules to consume.
+Owners can build their full property structure, every bed status change is logged, and occupancy numbers are available for later modules.
 
 ## Dependency Note
-Phase 4 (the booking engine) operates directly on the Bed model's status field and history log built here — this phase must be complete and stable before Phase 4 begins.
+Phase 4 operates directly on `bed.model`'s status field and `bed-history.service` built here — this phase must be stable before Phase 4 begins.
