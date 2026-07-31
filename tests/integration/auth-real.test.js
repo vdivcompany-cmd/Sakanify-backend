@@ -11,12 +11,34 @@
 const request = require('supertest');
 const mongoose = require('mongoose');
 const app = require('../../src/app.entry');
+const authRoutes = require('../../src/modules/auth/auth.routes');
 const User = require('../../src/modules/auth/auth.model');
 const OTP = require('../../src/modules/auth/otp.model');
 const authService = require('../../src/modules/auth/auth.service');
 const { ROLES } = require('../../src/config/constants.config');
 
 const env = require('../../src/config/env.config');
+
+/**
+ * Unique phone number generator for tests.
+ *
+ * Root cause of the CI failures this fixes: many tests in this file used
+ * the SAME hardcoded phone number (e.g. +201234567890). The otp.service
+ * layer counts recent OTP requests PER PHONE NUMBER and rejects the 4th
+ * one within the window (by design — that's the anti-spam control working
+ * correctly, see otp.service.js). Reusing one phone across many tests
+ * tripped that check well before any individual test's own logic did.
+ *
+ * Giving every test its own phone number removes that cross-test
+ * interference without changing the OTP service's real rate-limiting
+ * logic at all.
+ */
+let phoneCounter = 0;
+function uniquePhone() {
+  phoneCounter += 1;
+  // +20 1 XX XXXXXXX shaped, padded so it stays a plausible Egyptian number
+  return `+2010${String(phoneCounter).padStart(8, '0')}`;
+}
 
 describe('🔐 Auth Integration Tests — Real Database', () => {
   beforeAll(async () => {
@@ -41,12 +63,27 @@ describe('🔐 Auth Integration Tests — Real Database', () => {
     // Clear collections before each test
     await User.deleteMany({});
     await OTP.deleteMany({});
+
+    // Reset the IP-based rate-limit middleware between tests too.
+    //
+    // Unique phone numbers (above) fix the otp.service's per-phone check,
+    // but express-rate-limit's OTP/login/password-reset middleware keys
+    // its counters by client IP by default — and every supertest request
+    // in this process shares the same simulated IP. Without this reset,
+    // the middleware layer would still exhaust itself after the first
+    // few tests regardless of phone number uniqueness.
+    //
+    // This calls the store's official resetAll() API (see auth.routes.js)
+    // — it does not touch the actual max/windowMs security configuration.
+    await authRoutes.rateLimitStores.otp.resetAll();
+    await authRoutes.rateLimitStores.login.resetAll();
+    await authRoutes.rateLimitStores.passwordReset.resetAll();
   });
 
   // ========== اختبار 1: تدفق OTP للطالب ==========
   describe('✅ Student OTP Login Flow', () => {
     test('should register and login student with OTP', async () => {
-      const phone = '+201234567890';
+      const phone = uniquePhone();
 
       // Step 1: Request OTP
       const otpRes = await request(app)
@@ -76,15 +113,17 @@ describe('🔐 Auth Integration Tests — Real Database', () => {
     });
 
     test('should reject invalid OTP code', async () => {
+      const phone = uniquePhone();
+
       // Request OTP
       await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+201234567890' });
+        .send({ phone });
 
       // Try with wrong code
       const res = await request(app)
         .post('/api/auth/verify-otp')
-        .send({ phone: '+201234567890', code: '000000' });
+        .send({ phone, code: '000000' });
 
       expect(res.status).toBe(401);
       expect(res.body.success).toBe(false);
@@ -228,9 +267,12 @@ describe('🔐 Auth Integration Tests — Real Database', () => {
   // ========== اختبار 4: تحديد التطبيقات (Rate Limiting) ==========
   describe('⏱️ Rate Limiting on Auth Endpoints', () => {
     test('should allow OTP requests within limit', async () => {
+      // Note: these deliberately use 3 DIFFERENT phone numbers to prove
+      // this is testing the IP-based rate-limit middleware (which doesn't
+      // care about phone number), not the otp.service per-phone check.
       const res1 = await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+201111111111' });
+        .send({ phone: uniquePhone() });
 
       expect(res1.status).toBe(200);
       expect(res1.body.success).toBe(true);
@@ -238,31 +280,36 @@ describe('🔐 Auth Integration Tests — Real Database', () => {
 
       const res2 = await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+201111111112' });
+        .send({ phone: uniquePhone() });
 
       expect(res2.status).toBe(200);
       console.log(`  ✓ Second OTP request allowed`);
 
       const res3 = await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+201111111113' });
+        .send({ phone: uniquePhone() });
 
       expect(res3.status).toBe(200);
       console.log(`  ✓ Third OTP request allowed (at limit)`);
     });
 
     test('should block OTP requests exceeding limit', async () => {
-      // Make 3 requests (max)
+      // Make 3 requests (max) — different phones on purpose, since this
+      // test targets the IP-based middleware limiter specifically, which
+      // is shared across phone numbers. beforeEach() resets it fresh for
+      // this test, so these 3 calls consume the full budget regardless
+      // of what phone number each one uses.
       for (let i = 0; i < 3; i++) {
         await request(app)
           .post('/api/auth/request-otp')
-          .send({ phone: `+202222222${i}` });
+          .send({ phone: uniquePhone() });
       }
 
-      // 4th request should be blocked
+      // 4th request (yet another distinct phone) should still be blocked —
+      // proving the block is IP-based, not phone-based.
       const res = await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+20222222299' });
+        .send({ phone: uniquePhone() });
 
       expect(res.status).toBe(429);
       console.log(`  ✓ 4th OTP request correctly rate-limited (status 429)`);
@@ -274,16 +321,18 @@ describe('🔐 Auth Integration Tests — Real Database', () => {
   // ========== اختبار 5: إدارة الرموز ==========
   describe('🔑 Token Management', () => {
     test('should refresh access token with valid refresh token', async () => {
+      const phone = uniquePhone();
+
       // Login to get tokens
       const otpRes = await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+203333333333' });
+        .send({ phone });
 
       const otpCode = otpRes.body.data._dev_code;
 
       const loginRes = await request(app)
         .post('/api/auth/verify-otp')
-        .send({ phone: '+203333333333', code: otpCode });
+        .send({ phone, code: otpCode });
 
       const refreshToken = loginRes.body.data.refreshToken;
       const oldAccessToken = loginRes.body.data.accessToken;
@@ -304,16 +353,18 @@ describe('🔐 Auth Integration Tests — Real Database', () => {
   // ========== اختبار 6: إلغاء الأدوار (Role Rejection) ==========
   describe('🚫 Role-Based Access Control', () => {
     test('student token should be rejected on admin-only endpoints', async () => {
+      const phone = uniquePhone();
+
       // Get student token
       const otpRes = await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+204444444444' });
+        .send({ phone });
 
       const otpCode = otpRes.body.data._dev_code;
 
       const loginRes = await request(app)
         .post('/api/auth/verify-otp')
-        .send({ phone: '+204444444444', code: otpCode });
+        .send({ phone, code: otpCode });
 
       const studentToken = loginRes.body.data.accessToken;
 

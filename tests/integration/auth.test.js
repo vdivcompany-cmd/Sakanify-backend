@@ -15,11 +15,24 @@ const request = require('supertest');
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const app = require('../../src/app.entry');
+const authRoutes = require('../../src/modules/auth/auth.routes');
 const User = require('../../src/modules/auth/auth.model');
 const OTP = require('../../src/modules/auth/otp.model');
 const { ROLES } = require('../../src/config/constants.config');
 
 let mongoServer;
+
+/**
+ * Unique phone number per test — see the identical helper (and the
+ * explanation of why it's needed) in auth-real.test.js. Kept as a
+ * separate copy here rather than a shared import so each test file
+ * stays independently runnable.
+ */
+let phoneCounter = 0;
+function uniquePhone() {
+  phoneCounter += 1;
+  return `+2011${String(phoneCounter).padStart(8, '0')}`;
+}
 
 /**
  * Setup and teardown
@@ -39,6 +52,14 @@ beforeEach(async () => {
   // Clear collections before each test
   await User.deleteMany({});
   await OTP.deleteMany({});
+
+  // Reset rate-limit middleware state between tests — same reasoning as
+  // auth-real.test.js: unique phone numbers alone don't reset the
+  // IP-keyed express-rate-limit middleware, since every supertest
+  // request in this process shares one simulated IP.
+  await authRoutes.rateLimitStores.otp.resetAll();
+  await authRoutes.rateLimitStores.login.resetAll();
+  await authRoutes.rateLimitStores.passwordReset.resetAll();
 });
 
 describe('Auth Module - Integration Tests', () => {
@@ -46,52 +67,58 @@ describe('Auth Module - Integration Tests', () => {
 
   describe('Student Registration & OTP Login', () => {
     it('should register a new student', async () => {
+      const phone = uniquePhone();
       const res = await request(app)
         .post('/api/auth/register-student')
-        .send({ phone: '+201234567890' });
+        .send({ phone });
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.phone).toBe('+201234567890');
+      expect(res.body.data.phone).toBe(phone);
       expect(res.body.data.userId).toBeDefined();
     });
 
     it('should reject duplicate student registration', async () => {
+      const phone = uniquePhone();
+
       await request(app)
         .post('/api/auth/register-student')
-        .send({ phone: '+201234567890' });
+        .send({ phone });
 
       const res = await request(app)
         .post('/api/auth/register-student')
-        .send({ phone: '+201234567890' });
+        .send({ phone });
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
     });
 
     it('should request OTP for student login', async () => {
+      const phone = uniquePhone();
       const res = await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+201234567890' });
+        .send({ phone });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.phone).toBe('+201234567890');
+      expect(res.body.data.phone).toBe(phone);
       expect(res.body.data._dev_code).toBeDefined(); // Development mode OTP code
     });
 
     it('should verify OTP and log in student', async () => {
+      const phone = uniquePhone();
+
       // Request OTP
       const otpRes = await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+201234567890' });
+        .send({ phone });
 
       const otpCode = otpRes.body.data._dev_code;
 
       // Verify OTP and login
       const loginRes = await request(app)
         .post('/api/auth/verify-otp')
-        .send({ phone: '+201234567890', code: otpCode });
+        .send({ phone, code: otpCode });
 
       expect(loginRes.status).toBe(200);
       expect(loginRes.body.success).toBe(true);
@@ -101,32 +128,42 @@ describe('Auth Module - Integration Tests', () => {
     });
 
     it('should reject invalid OTP', async () => {
+      const phone = uniquePhone();
+
       // Request OTP
       await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+201234567890' });
+        .send({ phone });
 
       // Try to login with wrong OTP
       const res = await request(app)
         .post('/api/auth/verify-otp')
-        .send({ phone: '+201234567890', code: '000000' });
+        .send({ phone, code: '000000' });
 
       expect(res.status).toBe(401);
       expect(res.body.success).toBe(false);
     });
 
     it('should rate-limit OTP requests', async () => {
-      // Request OTP 3 times (max attempts)
+      const phone = uniquePhone();
+
+      // Request OTP 3 times (max attempts) — same phone number on purpose,
+      // this test verifies OTP requests get blocked after the limit
+      // (enforced by both the IP-based middleware and the otp.service
+      // per-phone check, both capped at 3). beforeEach() resets both to a
+      // clean slate for this test, so the 4th call below is guaranteed to
+      // be blocked by this test's own 3 calls, not leftovers from another
+      // test.
       for (let i = 0; i < 3; i++) {
         await request(app)
           .post('/api/auth/request-otp')
-          .send({ phone: '+201234567890' });
+          .send({ phone });
       }
 
       // 4th request should fail
       const res = await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+201234567890' });
+        .send({ phone });
 
       expect(res.status).toBe(429); // Too Many Requests
     });
@@ -216,16 +253,18 @@ describe('Auth Module - Integration Tests', () => {
 
   describe('Role-Based Access Control (RBAC)', () => {
     it('should reject student token on owner-only route', async () => {
+      const phone = uniquePhone();
+
       // Create and login student
       const otpRes = await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+201234567890' });
+        .send({ phone });
 
       const otpCode = otpRes.body.data._dev_code;
 
       const loginRes = await request(app)
         .post('/api/auth/verify-otp')
-        .send({ phone: '+201234567890', code: otpCode });
+        .send({ phone, code: otpCode });
 
       const studentToken = loginRes.body.data.accessToken;
 
@@ -310,16 +349,18 @@ describe('Auth Module - Integration Tests', () => {
 
   describe('Token Refresh & Expiry', () => {
     it('should refresh access token with valid refresh token', async () => {
+      const phone = uniquePhone();
+
       // Generate student login
       const otpRes = await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+201234567890' });
+        .send({ phone });
 
       const otpCode = otpRes.body.data._dev_code;
 
       const loginRes = await request(app)
         .post('/api/auth/verify-otp')
-        .send({ phone: '+201234567890', code: otpCode });
+        .send({ phone, code: otpCode });
 
       const refreshToken = loginRes.body.data.refreshToken;
 
@@ -353,16 +394,18 @@ describe('Auth Module - Integration Tests', () => {
 
   describe('Logout', () => {
     it('should logout authenticated user', async () => {
+      const phone = uniquePhone();
+
       // Login as student
       const otpRes = await request(app)
         .post('/api/auth/request-otp')
-        .send({ phone: '+201234567890' });
+        .send({ phone });
 
       const otpCode = otpRes.body.data._dev_code;
 
       const loginRes = await request(app)
         .post('/api/auth/verify-otp')
-        .send({ phone: '+201234567890', code: otpCode });
+        .send({ phone, code: otpCode });
 
       const accessToken = loginRes.body.data.accessToken;
 

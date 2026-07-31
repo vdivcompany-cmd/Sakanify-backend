@@ -14,17 +14,21 @@ const { ROLES } = require('../../config/constants.config');
 const userSchema = new mongoose.Schema(
   {
     // --- Email (optional for students, required for owners/admins) ---
+    // NOTE: no `sparse`/`unique`/`index` here on purpose — the unique+sparse
+    // index is defined once, explicitly, via userSchema.index() below.
+    // Setting `sparse: true` on the field AND calling schema.index() for the
+    // same field both register an index, which is what caused the
+    // "Duplicate schema index" warning from Mongoose.
     email: {
       type: String,
-      sparse: true, // Allows null values without unique constraint violation
       trim: true,
       lowercase: true,
     },
 
     // --- Phone (optional for owners/admins, required for students) ---
+    // Same reasoning as `email` above — index defined once, explicitly, below.
     phone: {
       type: String,
-      sparse: true,
       trim: true,
     },
 

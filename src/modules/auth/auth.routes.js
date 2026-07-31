@@ -10,6 +10,7 @@
 
 const express = require('express');
 const rateLimit = require('express-rate-limit');
+const { MemoryStore } = require('express-rate-limit');
 const authController = require('./auth.controller');
 const { verifyToken, requireRole } = require('../../middleware/auth.middleware');
 const { ROLES } = require('../../config/constants.config');
@@ -17,6 +18,24 @@ const { ROLES } = require('../../config/constants.config');
 const router = express.Router();
 
 // --- Stricter rate limiting for auth endpoints ---
+//
+// Each limiter gets its own explicit MemoryStore instance (rather than
+// letting express-rate-limit create an implicit default one) purely so
+// tests can reset it between test suites via store.resetAll(). This does
+// NOT change limiter behavior in production — same max/windowMs as before,
+// same in-memory storage. See tests/integration/*.test.js for usage.
+//
+// NOTE: The rate-limit key is the client IP by default. In a real deployment
+// with many distinct users behind different IPs, that's fine. But every
+// request made by supertest in a test run originates from the same
+// simulated IP, so without a way to reset between test groups, the very
+// first 3 OTP requests in an entire test run would exhaust the limiter for
+// every test after it — that was the root cause of the CI failures we saw.
+
+const otpStore = new MemoryStore();
+const loginStore = new MemoryStore();
+const passwordResetStore = new MemoryStore();
+
 // OTP requests: max 3 per 5 minutes to prevent spam
 const otpLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
@@ -24,6 +43,7 @@ const otpLimiter = rateLimit({
   message: 'Too many OTP requests. Please try again later.',
   standardHeaders: false,
   legacyHeaders: false,
+  store: otpStore,
 });
 
 // Login attempts: max 5 per 15 minutes to prevent brute force
@@ -33,6 +53,7 @@ const loginLimiter = rateLimit({
   message: 'Too many login attempts. Please try again later.',
   standardHeaders: false,
   legacyHeaders: false,
+  store: loginStore,
 });
 
 // Password reset: max 3 per 60 minutes
@@ -42,6 +63,7 @@ const passwordResetLimiter = rateLimit({
   message: 'Too many password reset requests. Please try again later.',
   standardHeaders: false,
   legacyHeaders: false,
+  store: passwordResetStore,
 });
 
 // --- Public endpoints (no authentication required) ---
@@ -126,5 +148,16 @@ router.post(
   requireRole(ROLES.SUPER_ADMIN),
   authController.inviteOwner,
 );
+
+// --- Test-only escape hatch ---
+// Exposes the rate-limit stores so integration tests can call
+// resetAll() between test suites (see tests/integration/*.test.js).
+// This does not affect production: the router itself is unchanged,
+// this is just an extra property attached to the exported function.
+router.rateLimitStores = {
+  otp: otpStore,
+  login: loginStore,
+  passwordReset: passwordResetStore,
+};
 
 module.exports = router;
