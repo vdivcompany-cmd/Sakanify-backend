@@ -1,0 +1,38 @@
+CLAUDE.md UPDATE LOG
+====================
+
+Date: 2026-07-31
+Updated By: Claude AI
+Change: Modified Documentation Rule (Section 1)
+
+CHANGES MADE:
+=============
+
+1. "What Must Be Produced" section:
+   - Removed requirement for PDF generation
+   - Now requires ONLY Markdown file
+   - PDF is now optional
+
+2. "Timing Rule" section:
+   - Removed "and PDF generation" from requirements
+   - Now says: "The documentation must be generated immediately..."
+
+3. "Before Starting Any Phase" Checklist:
+   - Updated final checklist item
+   - Changed from "The Arabic phase report + PDF have been generated"
+   - Now: "The Arabic phase report (Markdown) has been generated"
+
+REASON:
+=======
+Streamline documentation requirements - Markdown files provide all necessary 
+information for audit trail and stakeholder reference. PDF generation adds 
+overhead without proportional benefit.
+
+FILES MODIFIED:
+===============
+- .claude/CLAUDE.md (primary project rules file)
+
+EFFECTIVE FOR:
+==============
+- Phase 2 onward (Phase 1 reports already generated as .md + .pdf)
+- All future phases
