@@ -55,6 +55,10 @@ app.get('/health', async (req, res) => {
 // Phase 1: Authentication
 app.use('/api/auth', require('./modules/auth/auth.routes'));
 
+// Phase 2: Students & Simplified KYC
+app.use('/api/students', require('./modules/students/student.routes'));
+app.use('/api/kyc', require('./modules/kyc/kyc.routes'));
+
 // --- 404 fallback for unknown routes ---
 app.use((req, res) => {
   return res.status(404).json({ success: false, message: `Route not found: ${req.method} ${req.originalUrl}` });

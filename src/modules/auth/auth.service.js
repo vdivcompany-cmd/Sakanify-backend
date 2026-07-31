@@ -11,8 +11,21 @@ const crypto = require('crypto');
 const User = require('./auth.model');
 const OTP = require('./otp.model');
 const otpService = require('./otp.service');
+const authRepository = require('./auth.repository');
 const env = require('../../config/env.config');
 const { ROLES } = require('../../config/constants.config');
+
+/**
+ * Get a user by id (added in Phase 2). Exists so other modules (e.g.
+ * students, kyc) can look up a user's own account data — phone, email —
+ * through a service call rather than importing auth.repository/auth.model
+ * directly, per CLAUDE.md Section 7.2 (cross-module logic goes through
+ * service calls, not direct database access into another module's
+ * collection).
+ */
+async function getUserById(userId) {
+  return authRepository.findUserById(userId);
+}
 
 /**
  * Hash a password using bcryptjs
@@ -407,6 +420,7 @@ module.exports = {
   generateOwnerId,
   issueTokens,
   verifyToken,
+  getUserById,
   registerStudent,
   loginStudent,
   loginOwner,

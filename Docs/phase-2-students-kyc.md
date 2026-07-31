@@ -40,3 +40,11 @@ Students can register with the lean profile, submit simplified KYC, and Owners c
 
 ## Dependency Note
 The Requests module (Phase 4) references this student and KYC data directly when displaying a request to an owner — it should pull from here rather than duplicating data.
+
+## Product Decision Resolved Before Implementation (Added After Review)
+
+**File storage provider decision (finalized):** Following the same abstraction approach used for OTP in Phase 1, do NOT integrate a real cloud storage provider yet. Implement `file-upload.util` (from Phase 0) behind a storage interface (e.g., a `storeFile(buffer, metadata)` / `getFileUrl(reference)` pair of functions) so swapping the real provider in later requires no changes to calling code in `student.service` or `kyc.service`.
+
+For Phase 2 and CI testing, implement the storage adapter as a **local/mock implementation** (e.g., writes to a temp directory or in-memory store during tests, returns a realistic-looking reference/URL). Do not provision or pay for real cloud storage at this stage.
+
+When real storage is needed (ahead of the first real pilot building onboarding in Sohag), the planned provider is **Cloudflare R2** — it is S3-API-compatible (so the existing `@aws-sdk/client-s3` integration from Phase 0 works without code changes, only a different endpoint/credentials), and has no egress fees, making it meaningfully cheaper than AWS S3 for this project's budget-conscious, Egypt-only stage. This decision should be documented in the phase report, and the storage interface must be built now so this swap requires zero changes to `student.service` or `kyc.service` when it happens.
