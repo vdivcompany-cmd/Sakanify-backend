@@ -38,6 +38,20 @@ function generateOwnerId() {
 
 /**
  * Issue JWT access and refresh tokens
+ *
+ * Each token gets its own random `jti` (JWT ID) claim. Without this, two
+ * tokens signed for the same user with the same payload within the same
+ * second would be byte-for-byte identical: jsonwebtoken's `iat` claim has
+ * one-second resolution, and HMAC signing is deterministic for identical
+ * input — same header + same payload + same secret always produces the
+ * same signature. That's not a security hole on its own (a same-second
+ * re-issue is still a valid, correctly-scoped token), but it did cause a
+ * refresh-token test to fail because it asserted the new access token
+ * differs from the old one, and it's also just bad practice: without a
+ * per-token identifier there's no way to ever revoke one specific token,
+ * only "all tokens for this user" (see logout()/initiatePasswordReset()
+ * above, which can only invalidate everything at once). `jti` gives us
+ * that hook for later, even though per-token revocation isn't wired up yet.
  */
 function issueTokens(userId, role, ownerId = null) {
   const accessToken = jwt.sign(
@@ -46,6 +60,7 @@ function issueTokens(userId, role, ownerId = null) {
       role,
       ownerId,
       type: 'access',
+      jti: crypto.randomUUID(),
     },
     env.jwt.accessSecret,
     { expiresIn: env.jwt.accessExpiry },
@@ -57,6 +72,7 @@ function issueTokens(userId, role, ownerId = null) {
       role,
       ownerId,
       type: 'refresh',
+      jti: crypto.randomUUID(),
     },
     env.jwt.refreshSecret,
     { expiresIn: env.jwt.refreshExpiry },
@@ -235,13 +251,16 @@ async function refreshAccessToken(refreshToken) {
       throw new Error('User not found or inactive');
     }
 
-    // Generate new access token
+    // Generate new access token — same jti reasoning as issueTokens() above:
+    // a fresh random jti guarantees this token differs from the one being
+    // replaced even if both were minted within the same second.
     const newAccessToken = jwt.sign(
       {
         userId: user._id,
         role: user.role,
         ownerId: user.owner_id,
         type: 'access',
+        jti: crypto.randomUUID(),
       },
       env.jwt.accessSecret,
       { expiresIn: env.jwt.accessExpiry },
