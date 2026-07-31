@@ -37,3 +37,15 @@ All three roles can authenticate, receive valid tokens, and are correctly restri
 
 ## Dependency Note
 Every module from Phase 2 onward imports `auth.middleware` for route protection and the ownership-scoping helper for data isolation. Any gap discovered later means revisiting every dependent module, so test this phase thoroughly before proceeding.
+
+## Product Decisions Resolved Before Implementation (Added After Review)
+
+1. **Owner account creation is admin-invited, not self-service.** There must be no public "register as owner" endpoint. Owner accounts are created either directly by a Super-Admin (manual creation with a temporary password/invite link) or via an "invite owner" endpoint restricted to the Super-Admin role. Document this clearly in `auth.routes` — the public-facing routes are limited to student OTP registration/login and owner/admin login only.
+
+2. **The first Super-Admin account must be created via a one-time seed script**, not through any exposed API endpoint. There must be no public or authenticated endpoint that can create a super-admin account. If a "create additional super-admin" capability is needed later, it must be restricted to existing super-admins only (built in Phase 7, not here).
+
+3. **OTP delivery provider decision (finalized):** The project targets Egypt only at this stage. Build `otp.service` behind an interface/abstraction (e.g., a `sendOtp(phone, code)` function) so the provider can be swapped without touching calling code. For Phase 1, implement the OTP sending function as a **mock/console-log implementation** (no real SMS sent yet, code is logged/returned for development testing). Do not integrate Unifonic — it is optimized and priced for the Gulf market (Saudi Arabia/UAE) and is not the right fit for an Egypt-only launch. The real integration will use a **local Egyptian SMS/OTP gateway provider** (e.g., SMS Misr or a comparable Egypt-focused provider, to be finalized after a pricing quote comparison), integrated in a later phase once real send volume is needed — this keeps Phase 1 unblocked and avoids committing to a paid provider before it's needed.
+
+4. **Enforce a unique constraint on student phone number and owner/admin email at the database level**, not just application-level validation, to prevent duplicate account creation.
+
+5. **On password reset, invalidate all existing refresh tokens for that account** — a reset should force re-authentication everywhere, not just update the password while old sessions remain valid.
