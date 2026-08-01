@@ -206,3 +206,49 @@ Docs/reports/phase-6-subscriptions-report.md     → هذا التحديث
 تم التحقق من خلو `request.service.js` و`booking-engine.test.js` (والملفات الأخرى المعدَّلة سابقًا) من أخطاء الـ syntax (`node --check`)، وتم التأكد أن `app.entry.js` بكامل شجرة الموديولات (بما فيها الربط الجديد بين Requests وSubscriptions) لسه يُحمَّل بدون أي خطأ — أي لا توجد دائرة استيراد ولا خطأ تحميل ناتج عن هذا التغيير.
 
 **لم يتم تشغيل مجموعتي الاختبارات فعليًا (`booking-engine.test.js` كاملة، ولا `cash-payment.test.js`، ولا `subscriptions-utilities.test.js`) داخل بيئة الـ sandbox** — نفس القيد التقني الموثَّق سابقًا في هذا التقرير بالضبط (محاولة تحميل ثنائي MongoDB بمعمارية Windows داخل بيئة Linux). تم إعادة محاولة التشغيل وتنظيف ملفات التحميل الجزئية من الكاش مرة أخرى في هذه الجولة، لكن السبب الجذري (معمارية الثنائي الخاطئة) بيئي وليس شيئًا يمكن حله من داخل الـ sandbox. **بانتظار الدفع عبر `push.bat` ونتيجة GitHub Actions الحقيقية** — لتأكيد أن مجموعتي اختبارات المرحلتين الرابعة والخامسة، بالإضافة لمجموعة اختبارات هذه المرحلة، تنجح **معًا** بدون أي تعارض ناتج عن هذا الربط الجديد، كما طلب صاحب المشروع صراحة.
+
+---
+
+## إصلاح خلل حقيقي بعد أول تشغيل CI حقيقي (GitHub Actions)
+
+بعد الدفع الفعلي عبر `push.bat` وتشغيل GitHub Actions لأول مرة، ظهر خطأ حقيقي وقت التشغيل من `subscription.controller.getMySubscription`:
+
+```
+TypeError: bedRepository.countByOwner is not a function
+    at bed.service.js:52:24 (countBedsForOwner)
+    at subscription.service.js:64:37 (getUsageForOwner)
+```
+
+### السبب الجذري
+**نفس نمط الخلل الحقيقي المُكتشَف في المرحلة الرابعة بالضبط** (الموثَّق في البند 7.3a من CLAUDE.md: `bedRepository.conditionalUpdateStatus` كانت مبنية لكن غير مُصدَّرة من `module.exports`). في هذه الحالة: دالة `countByOwner()` في `src/modules/beds/bed.repository.js` كانت **مكتوبة فعليًا وصحيحة منطقيًا** (السطور 33-35 من الملف)، لكنها **لم تُضَف لكائن `module.exports`** أسفل الملف — فكانت `bedRepository.countByOwner` تُقيَّم إلى `undefined` وقت التشغيل الفعلي، رغم أن الدالة موجودة في الملف ورغم أن كل الفحوصات الثابتة اللي تمت هذه المرحلة (`node --check` وتحميل `app.entry.js` بالكامل) **لا يمكنها اكتشاف هذا النوع من الأخطاء** — `require()` لا يفشل ولا يُحمِّل خطأً عند نسيان تصدير دالة واحدة من كائن موجود بالفعل؛ الخطأ يظهر فقط عند **استدعاء** الدالة الناقصة فعليًا، أي وقت تنفيذ اختبار حقيقي أو طلب HTTP حقيقي — بالضبط السبب اللي يجعل البند 7.3a من CLAUDE.md مهمًا: تصنيف الخطأ الصحيح (`TypeError` غير مُتوقَّعة، وليست `AppError` عادية) + تسجيلها فعليًا في اللوج (`console.error`) هو اللي خلّى تشخيص السبب فوريًا من أول سطر في اللوج، بدل رسالة عامة "400 Bad Request" مُبهمة.
+
+### الإصلاح
+تعديل سطر واحد في `src/modules/beds/bed.repository.js` — إضافة `countByOwner` لكائن `module.exports`:
+
+```js
+module.exports = {
+  create,
+  findById,
+  findByApartment,
+  countByApartment,
+  countByOwner,        // ← كانت ناقصة
+  findAllByApartmentIds,
+  updateById,
+  conditionalUpdateStatus,
+  deleteById,
+  aggregateStatusCounts,
+};
+```
+
+### فحص شامل لنفس النمط عبر كل ملفات هذه المرحلة
+بعد الإصلاح، تم عمل مسح شامل (سكريبت Node واحد، بمعزل عن كل ملفات `repository`/`service`/`controller` التي لمستها هذه المرحلة أو المرحلة السابقة من هذا التحديث) يقارن كل دالة مُعرَّفة بصيغة `function` على المستوى الأعلى في كل ملف مقابل ما هو مُصدَّر فعليًا من `module.exports`، للتأكد من عدم وجود نسخة أخرى من نفس الخلل مختبئة في مكان آخر. النتيجة: **الحالة الوحيدة الحقيقية كانت `bedRepository.countByOwner`**؛ باقي الدوال غير المُصدَّرة اللي ظهرت في المسح (`handleControllerError`, `validateBillFields`, `validateBuildingFields`, `buildFilter`, `toObjectId`) هي دوال مساعدة داخلية مقصودة عمدًا بدون تصدير — نفس النمط المُتَّبع في كل موديول آخر بالكود قبل هذه المرحلة (مثال: `buildFilter` في `payment.repository.js` نفسها لم تكن مُصدَّرة من الأساس منذ المرحلة الخامسة، وهذا صحيح ومقصود). تم أيضًا التأكد صراحة (باستدعاء فعلي لا فحص نصي فقط) أن كل دالة عابرة للموديولات أضافتها هذه المرحلة قابلة للاستدعاء فعليًا وقت التشغيل: `bedService.countBedsForOwner`, `rentalService.listActiveOrVacatingRentalsForBeds`, `paymentService.ensurePaymentForPeriod`, `paymentService.applyUtilityCharge`, `buildingService.setUtilitiesIncludedInRent`.
+
+### ملفات مُعدَّلة في هذا الإصلاح
+```
+src/modules/beds/bed.repository.js               → إضافة countByOwner لـ module.exports (السطر الناقص فقط)
+Docs/reports/phase-6-subscriptions-report.md      → هذا القسم
+```
+
+**لم تُلمَس ملفات المرحلتين الرابعة والخامسة (`booking-engine.test.js`, `cash-payment.test.js`) إطلاقًا في هذا الإصلاح** — تأكيد صاحب المشروع أن كلا المجموعتين نجحتا 100% في نفس تشغيل GitHub Actions يعني أن أي تعديل إضافي عليهما غير مبرر وغير مطلوب.
+
+**نتيجة التحقق المحلي لهذا الإصلاح:** تم استدعاء `bedRepository.countByOwner` و`bedService.countBedsForOwner` و`subscriptionService.getUsageForOwner` فعليًا (لا فحص نصي فقط) والتأكد أنها دوال قابلة للاستدعاء (`typeof === 'function'`)، وتم إعادة تحميل `app.entry.js` بالكامل للتأكد من عدم وجود أي كسر آخر. **بانتظار إعادة الدفع عبر `push.bat` وتأكيد GitHub Actions أن 169/169 اختبارًا تنجح فعليًا** (مجموعات المراحل الرابعة والخامسة والسادسة معًا) بعد هذا الإصلاح.

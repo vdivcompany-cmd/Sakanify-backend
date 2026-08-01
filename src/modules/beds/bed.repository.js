@@ -91,6 +91,7 @@ module.exports = {
   findById,
   findByApartment,
   countByApartment,
+  countByOwner,
   findAllByApartmentIds,
   updateById,
   conditionalUpdateStatus,
