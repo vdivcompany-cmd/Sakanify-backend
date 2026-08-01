@@ -12,6 +12,8 @@
 const { success, error } = require('../../shared/utils/response.util');
 const buildingService = require('../buildings/building.service');
 const apartmentService = require('./apartment.service');
+const bedService = require('../beds/bed.service');
+const rentalService = require('../rentals/rental.service');
 const { ownershipScoping } = require('../../middleware/auth.middleware');
 const { parsePagination, buildMeta } = require('../../shared/utils/pagination.util');
 
@@ -150,7 +152,11 @@ async function updateApartment(req, res) {
 
 /**
  * DELETE /api/apartments/:apartmentId
- * Owner only, ownership-scoped. Blocked while beds still exist under it.
+ * Owner only, ownership-scoped. Blocked while any of its beds has an
+ * active/vacating rental (Phase 4 step 11 retrofit — authoritative
+ * signal), OR while beds still exist under it at all
+ * (apartmentService.deleteApartment's original Phase 3 check, kept as a
+ * secondary safety layer).
  */
 async function deleteApartment(req, res) {
   try {
@@ -160,6 +166,16 @@ async function deleteApartment(req, res) {
       ownershipScoping(req.user.ownerId, apartment.owner_id);
     } catch (scopeErr) {
       return error(res, { statusCode: 403, message: scopeErr.message });
+    }
+
+    const beds = await bedService.listAllBedsForApartments([apartment._id]);
+    const bedIds = beds.map((bed) => bed._id);
+    const hasActiveRental = await rentalService.anyBedHasActiveRental(bedIds);
+    if (hasActiveRental) {
+      return error(res, {
+        statusCode: 409,
+        message: 'Cannot delete apartment: one of its beds has an active or vacating rental. Finalize move-out(s) first.',
+      });
     }
 
     await apartmentService.deleteApartment(req.params.apartmentId);

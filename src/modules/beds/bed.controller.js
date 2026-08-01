@@ -11,6 +11,7 @@ const { success, error } = require('../../shared/utils/response.util');
 const apartmentService = require('../apartments/apartment.service');
 const bedService = require('./bed.service');
 const bedHistoryService = require('./bed-history.service');
+const rentalService = require('../rentals/rental.service');
 const { ownershipScoping } = require('../../middleware/auth.middleware');
 const { parsePagination, buildMeta } = require('../../shared/utils/pagination.util');
 const { BED_STATUS } = require('../../config/constants.config');
@@ -159,8 +160,14 @@ async function updateBed(req, res) {
 
 /**
  * DELETE /api/beds/:bedId
- * Owner only, ownership-scoped. Blocked unless the bed's status is
- * "available" (bed.service.deleteBed).
+ * Owner only, ownership-scoped. Blocked while an active or vacating
+ * rental exists for this bed — the authoritative signal as of Phase 4
+ * (Docs/phase-4-booking-engine.md step 11: Phase 3 used
+ * `bed.status !== 'available'` as a temporary proxy for "has an active
+ * relationship" because Rentals didn't exist yet; now that it does, the
+ * rental check runs first here, and bed.service.deleteBed's own
+ * status-based check still runs afterward as a secondary safety layer —
+ * it stays in place, but rental data is now the primary signal).
  */
 async function deleteBed(req, res) {
   try {
@@ -170,6 +177,14 @@ async function deleteBed(req, res) {
       ownershipScoping(req.user.ownerId, bed.owner_id);
     } catch (scopeErr) {
       return error(res, { statusCode: 403, message: scopeErr.message });
+    }
+
+    const hasActiveRental = await rentalService.bedHasActiveRental(bed._id);
+    if (hasActiveRental) {
+      return error(res, {
+        statusCode: 409,
+        message: 'Cannot delete bed: an active or vacating rental exists for it. Finalize the move-out first.',
+      });
     }
 
     await bedService.deleteBed(req.params.bedId);

@@ -19,11 +19,19 @@ const mongoose = require('mongoose');
 
 const auditSchema = new mongoose.Schema(
   {
-    // Who performed the action. Always a User (auth.model) id.
+    // Who performed the action — a User (auth.model) id for every
+    // human-triggered action. Nullable as of Phase 4: automated
+    // system actions (request-expiry.job auto-expiring an unanswered
+    // request and releasing its bed) have no human actor. A null actor
+    // combined with a self-describing action name (e.g.
+    // "request_expired") still tells you exactly WHAT happened and WHEN —
+    // the audit trail stays complete, it just records "the system" instead
+    // of inventing a fake user to satisfy a NOT NULL constraint.
     actor: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      required: false,
+      default: null,
     },
 
     // Free-form but consistent action name, e.g. "bed_status_change",

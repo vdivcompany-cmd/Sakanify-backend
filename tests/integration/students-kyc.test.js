@@ -401,27 +401,31 @@ describe('Students & KYC Module - Integration Tests', () => {
     });
   });
 
-  // ========== OWNER-FACING SCOPE (DEFERRED TO PHASE 4) ==========
+  // ========== OWNER-FACING SCOPE ==========
+  //
+  // Deferred out of this phase (Phase 2) in the original implementation —
+  // Buildings/Rentals, which the relationship would be scoped through,
+  // didn't exist yet. Now built in Phase 4
+  // (Docs/phase-4-booking-engine.md step 10) as
+  // GET /api/students/:studentId/full-profile, relationship-scoped via
+  // request/rental data instead of a simple owner_id match. The real
+  // coverage (including the Owner-A-cannot-see-Owner-B's-student
+  // isolation test) now lives in
+  // tests/integration/booking-engine.test.js. This block just confirms
+  // the bare, un-suffixed path was never a route, before or after Phase 4.
 
-  describe('Owner-Facing KYC View — Deliberately Deferred (see Phase 2 report)', () => {
-    it('should NOT expose any owner-facing endpoint for reading a student\'s KYC data yet, because Buildings/Rentals (the relationship an ownership-scoping check would filter by) do not exist until Phase 3/4', async () => {
+  describe('Owner-Facing KYC View — path shape sanity check', () => {
+    it('should return 404 for the bare /api/students/:id path (the real endpoint is /:studentId/full-profile, added in Phase 4)', async () => {
       const phone = uniquePhone();
       await registerFullStudent(phone, '29901011234570');
       const student = await Student.findOne({});
       const { token: ownerToken } = await createOwner();
 
-      // No such route exists in this phase — confirms an owner cannot
-      // reach ANY student's KYC data through this module, by construction
-      // (there's nothing to authorize, because there's no route at all).
-      // This stands in for the classic "Owner A cannot see Owner B's
-      // student" isolation test, which cannot be meaningfully written
-      // until Phase 4 introduces the request/rental relationship the real
-      // ownership-scoping check will filter on.
       const res = await request(app)
         .get(`/api/students/${student._id}`)
         .set('Authorization', `Bearer ${ownerToken}`);
 
-      expect(res.status).toBe(404); // route not found, not 403 — it doesn't exist yet
+      expect(res.status).toBe(404);
     });
   });
 });

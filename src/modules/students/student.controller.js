@@ -10,6 +10,8 @@
 
 const { success, error } = require('../../shared/utils/response.util');
 const studentService = require('./student.service');
+const requestService = require('../requests/request.service');
+const rentalService = require('../rentals/rental.service');
 const { registerStudentSchema, updateProfileSchema, validate } = require('./student.validation');
 
 const NATIONAL_ID_PATTERN = /^\d{14}$/; // Egyptian national ID: 14 digits
@@ -108,8 +110,58 @@ async function updateMyProfile(req, res) {
   }
 }
 
+/**
+ * GET /api/students/:studentId/full-profile
+ * Owner only. Deferred from Phase 2 (Docs/phase-2-students-kyc.md
+ * Implementation Step 8) to Phase 4 (Docs/phase-4-booking-engine.md
+ * step 10), now that Requests/Rentals exist to scope this through.
+ *
+ * Access is explicitly NOT a simple owner_id match (there's no
+ * "owner_id" field on Student to compare against) — it's a relationship
+ * check: the requesting owner may only view a student who is connected
+ * to one of their buildings through a pending request OR an
+ * active/vacating rental. Checked via two service calls (request.service
+ * / rental.service), OR'd together, with an explicit 403 on failure —
+ * the same "isolation must be explicit" spirit as ownershipScoping(),
+ * just not literally that helper, since there's no single owner_id field
+ * to compare here.
+ */
+async function getFullProfileForOwner(req, res) {
+  try {
+    const { studentId } = req.params;
+    const ownerId = req.user.ownerId;
+
+    const [hasPending, hasActiveRental] = await Promise.all([
+      requestService.hasPendingRequestWithOwner(studentId, ownerId),
+      rentalService.hasActiveRelationshipWithOwner(studentId, ownerId),
+    ]);
+
+    if (!hasPending && !hasActiveRental) {
+      return error(res, {
+        statusCode: 403,
+        message: 'Access denied: this student has no pending request or active rental with your buildings.',
+      });
+    }
+
+    const { student, kyc } = await studentService.getFullProfileWithKyc(studentId);
+
+    return success(res, {
+      statusCode: 200,
+      message: 'Student profile retrieved',
+      data: {
+        student,
+        kyc_status: kyc ? kyc.verification_status : null,
+        kyc_student_photo: kyc ? kyc.student_photo : null,
+      },
+    });
+  } catch (err) {
+    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+  }
+}
+
 module.exports = {
   registerStudent,
   getMyProfile,
   updateMyProfile,
+  getFullProfileForOwner,
 };

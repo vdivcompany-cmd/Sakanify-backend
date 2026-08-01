@@ -65,6 +65,10 @@ app.use('/api/apartments', require('./modules/apartments/apartment.routes'));
 app.use('/api/beds', require('./modules/beds/bed.routes'));
 app.use('/api/audit', require('./modules/audit/audit.routes'));
 
+// Phase 4: Booking Engine (Requests & Rentals)
+app.use('/api/requests', require('./modules/requests/request.routes'));
+app.use('/api/rentals', require('./modules/rentals/rental.routes'));
+
 // --- 404 fallback for unknown routes ---
 app.use((req, res) => {
   return res.status(404).json({ success: false, message: `Route not found: ${req.method} ${req.originalUrl}` });

@@ -16,6 +16,14 @@ function findById(studentId) {
   return Student.findById(studentId);
 }
 
+// Batched lookup for many students at once — used by
+// student.service.getFullProfilesWithKycForIds (Phase 4's owner-facing
+// pending-requests list), one query regardless of page size
+// (CLAUDE.md Section 4.4).
+function findByIds(studentIds) {
+  return Student.find({ _id: { $in: studentIds } });
+}
+
 function create(data) {
   return Student.create(data);
 }
@@ -31,6 +39,7 @@ function updateByUserId(userId, updates) {
 module.exports = {
   findByUserId,
   findById,
+  findByIds,
   create,
   updateByUserId,
 };

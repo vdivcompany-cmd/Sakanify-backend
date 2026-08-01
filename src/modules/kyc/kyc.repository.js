@@ -21,6 +21,15 @@ function findByStudentIdWithSensitiveFields(studentId) {
   return Kyc.findOne({ student: studentId }).select('+national_id_number +national_id_photo');
 }
 
+// Batched lookup for many students at once — used by student.service's
+// owner-facing pending-requests summary (Phase 4) so a page of N pending
+// requests costs one Kyc query, not N (CLAUDE.md Section 4.4). Sensitive
+// fields stay excluded by the schema's `select: false` default, same as
+// every other read in this repository.
+function findByStudentIds(studentIds) {
+  return Kyc.find({ student: { $in: studentIds } });
+}
+
 function findById(kycId) {
   return Kyc.findById(kycId);
 }
@@ -44,6 +53,7 @@ function updateStatusById(kycId, updates) {
 module.exports = {
   findByStudentId,
   findByStudentIdWithSensitiveFields,
+  findByStudentIds,
   findById,
   create,
   updateByStudentId,

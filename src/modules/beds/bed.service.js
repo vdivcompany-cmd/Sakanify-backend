@@ -79,6 +79,30 @@ async function updateBed(bedId, updates, actorUserId) {
 }
 
 /**
+ * THE atomic bed-locking operation used by request.service (create ->
+ * available->pending), request.service (confirm -> pending->occupied,
+ * reject/expire -> pending->available), and rental.service (finalize
+ * move-out -> occupied->available). See
+ * bed.repository.conditionalUpdateStatus for the actual atomicity
+ * guarantee (CLAUDE.md Section 4.5) — this wrapper just adds the
+ * bed-history/audit write on success, mirroring updateBed()'s behavior
+ * for the plain (non-atomic) owner-editing path.
+ *
+ * Returns the updated bed on success, or `null` if the expected status
+ * didn't hold (the bed was already claimed by a concurrent
+ * request/action, or is genuinely in some other state) — callers must
+ * check for `null` and respond with a conflict, never assume success.
+ */
+async function atomicTransition(bedId, expectedStatus, newStatus, actorUserId = null) {
+  const updated = await bedRepository.conditionalUpdateStatus(bedId, expectedStatus, newStatus);
+  if (!updated) {
+    return null;
+  }
+  await bedHistoryService.recordStatusChange(bedId, actorUserId, expectedStatus, newStatus);
+  return updated;
+}
+
+/**
  * Block deletion of a bed unless it is currently AVAILABLE. Beds in any
  * other state (pending/occupied/maintenance) represent an active
  * relationship of some kind even before Phase 4's Rentals model exists —
@@ -149,6 +173,7 @@ module.exports = {
   countBedsForApartment,
   getBedById,
   updateBed,
+  atomicTransition,
   deleteBed,
   computeOccupancy,
   listAllBedsForApartments,

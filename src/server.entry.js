@@ -9,6 +9,7 @@ const app = require('./app.entry');
 const env = require('./config/env.config');
 const { connectDB } = require('./config/database.config');
 const scheduler = require('./shared/jobs/scheduler.core');
+const requestExpiryJob = require('./modules/requests/request-expiry.job');
 
 async function start() {
   await connectDB();
@@ -16,6 +17,8 @@ async function start() {
   // Job scheduler engine boots empty in Phase 0 — later phases register
   // jobs into it (request expiry, payment/subscription rollover) before
   // this call.
+  // Phase 4: auto-expire unanswered bed requests after 48h.
+  requestExpiryJob.register(scheduler);
   scheduler.startAll();
 
   const server = app.listen(env.port, () => {

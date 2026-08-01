@@ -8,10 +8,11 @@
  * endpoints).
  *
  * The owner-facing "view a student's profile + KYC" endpoint described in
- * Docs/phase-2-students-kyc.md Implementation Step 8 is deliberately NOT
- * built in this phase — see the Phase 2 report for the reasoning
- * (Buildings/Rentals, which the relationship would be scoped through,
- * don't exist until Phase 3/4).
+ * Docs/phase-2-students-kyc.md Implementation Step 8 was deferred out of
+ * Phase 2 (Buildings/Rentals didn't exist yet to scope it through) and is
+ * now built below, in Phase 4 (Docs/phase-4-booking-engine.md step 10) —
+ * owner-only, relationship-scoped via request/rental data, not the
+ * student's own userId.
  */
 
 const express = require('express');
@@ -48,5 +49,17 @@ router.get('/me', verifyToken, requireRole(ROLES.STUDENT), studentController.get
  * PATCH /api/students/me
  */
 router.patch('/me', verifyToken, requireRole(ROLES.STUDENT), studentController.updateMyProfile);
+
+/**
+ * GET /api/students/:studentId/full-profile
+ * Owner only. Relationship-scoped (pending request OR active/vacating
+ * rental with the requesting owner) — see student.controller.getFullProfileForOwner.
+ */
+router.get(
+  '/:studentId/full-profile',
+  verifyToken,
+  requireRole(ROLES.OWNER),
+  studentController.getFullProfileForOwner,
+);
 
 module.exports = router;

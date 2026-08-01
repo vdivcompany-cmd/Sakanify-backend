@@ -48,6 +48,22 @@ async function getMyKyc(studentId) {
 }
 
 /**
+ * Batched KYC lookup for many students at once, keyed by student id
+ * (string) -> kyc document or null if the student has no KYC record yet.
+ * Used by student.service.getFullProfilesWithKycForIds (Phase 4's
+ * owner-facing pending-requests list) — one query regardless of how many
+ * students are on the page (CLAUDE.md Section 4.4).
+ */
+async function getKycMapForStudents(studentIds) {
+  const kycRecords = await kycRepository.findByStudentIds(studentIds);
+  const map = new Map();
+  for (const kyc of kycRecords) {
+    map.set(kyc.student.toString(), kyc);
+  }
+  return map;
+}
+
+/**
  * Resubmit KYC after a rejection. Only allowed when the current status is
  * `rejected` — a student cannot resubmit a pending or already-verified
  * record (implementation step 7 in the phase spec: KYC resubmission is
@@ -140,6 +156,7 @@ async function updateVerificationStatus(kycId, newStatus, reviewerUserId) {
 module.exports = {
   createInitialKyc,
   getMyKyc,
+  getKycMapForStudents,
   resubmitKyc,
   updateVerificationStatus,
 };

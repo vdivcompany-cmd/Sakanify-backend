@@ -35,6 +35,30 @@ function updateById(bedId, updates) {
   return Bed.findByIdAndUpdate(bedId, { $set: updates }, { new: true, runValidators: true });
 }
 
+/**
+ * THE atomic locking primitive (Phase 4 — CLAUDE.md Section 4.5/8): a
+ * single conditional `findOneAndUpdate` that only succeeds if the bed's
+ * status still matches `expectedStatus` at the moment MongoDB applies the
+ * update. This is a single atomic document operation — MongoDB guarantees
+ * that if two requests race to flip the same bed at the same instant,
+ * only one `findOneAndUpdate` call can match the filter and apply the
+ * write; the loser's filter no longer matches (the status already
+ * changed) and it gets back `null`. No message queue, no
+ * application-level mutex/lock — the database itself is the lock.
+ *
+ * Returns the updated bed on success, or `null` if `expectedStatus`
+ * didn't match (someone else won the race, or the bed was never in that
+ * state to begin with) — callers must treat `null` as "the transition did
+ * not happen" and respond accordingly (e.g. 409 Conflict).
+ */
+function conditionalUpdateStatus(bedId, expectedStatus, newStatus) {
+  return Bed.findOneAndUpdate(
+    { _id: bedId, status: expectedStatus },
+    { $set: { status: newStatus, updated_at: new Date() } },
+    { new: true },
+  );
+}
+
 function deleteById(bedId) {
   return Bed.findByIdAndDelete(bedId);
 }
