@@ -10,6 +10,7 @@
 const kycRepository = require('./kyc.repository');
 const { VERIFICATION_STATUS } = require('./kyc.model');
 const fileStorage = require('../../shared/utils/file-storage.adapter');
+const auditService = require('../audit/audit.service');
 const { AppError } = require('../../middleware/error-handler.middleware');
 
 /**
@@ -98,6 +99,13 @@ async function resubmitKyc(studentId, { nationalIdPhotoBuffer, studentPhotoBuffe
  * any student's KYC — a real data-isolation gap. Route-level
  * requireRole(SUPER_ADMIN) enforces this; this function just records who
  * made the call.
+ *
+ * Retrofitted in Phase 3 (per Docs/phase-3-buildings-apartments-beds.md's
+ * "Added After Phase 2 Review" section): every status change now also
+ * writes to the real, central audit log via auditService.writeAuditLog(),
+ * in addition to the existing reviewed_by/reviewed_at fields kept on the
+ * KYC record itself for quick lookups. The audit entry is the
+ * authoritative record; reviewed_by/reviewed_at remain for convenience.
  */
 async function updateVerificationStatus(kycId, newStatus, reviewerUserId) {
   if (![VERIFICATION_STATUS.VERIFIED, VERIFICATION_STATUS.REJECTED].includes(newStatus)) {
@@ -109,11 +117,24 @@ async function updateVerificationStatus(kycId, newStatus, reviewerUserId) {
     throw new AppError('KYC record not found', 404);
   }
 
-  return kycRepository.updateStatusById(kycId, {
+  const previousStatus = kyc.verification_status;
+
+  const updated = await kycRepository.updateStatusById(kycId, {
     verification_status: newStatus,
     reviewed_by: reviewerUserId,
     reviewed_at: new Date(),
   });
+
+  await auditService.writeAuditLog({
+    actor: reviewerUserId,
+    action: 'kyc_status_change',
+    entityType: 'Kyc',
+    entityId: kycId,
+    beforeState: { verification_status: previousStatus },
+    afterState: { verification_status: newStatus },
+  });
+
+  return updated;
 }
 
 module.exports = {

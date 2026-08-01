@@ -59,6 +59,12 @@ app.use('/api/auth', require('./modules/auth/auth.routes'));
 app.use('/api/students', require('./modules/students/student.routes'));
 app.use('/api/kyc', require('./modules/kyc/kyc.routes'));
 
+// Phase 3: Buildings, Apartments, Beds, and the central Audit module
+app.use('/api/buildings', require('./modules/buildings/building.routes'));
+app.use('/api/apartments', require('./modules/apartments/apartment.routes'));
+app.use('/api/beds', require('./modules/beds/bed.routes'));
+app.use('/api/audit', require('./modules/audit/audit.routes'));
+
 // --- 404 fallback for unknown routes ---
 app.use((req, res) => {
   return res.status(404).json({ success: false, message: `Route not found: ${req.method} ${req.originalUrl}` });
