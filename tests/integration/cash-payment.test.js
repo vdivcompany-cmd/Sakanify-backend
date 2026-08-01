@@ -479,17 +479,35 @@ describe('Cash Payment Tracking (Phase 5) — Integration Tests', () => {
   // project owner decision after the initial Phase 5 delivery).
   // ========================================================================
   describe('payment-rollover.job — fixed-schedule monthly rollover', () => {
-    /** Backdates a payment's billing_period/due_date by one calendar
-     * month, so the rollover job's "has the calendar reached the next
-     * period yet" gate is satisfied in a test without waiting for real
-     * time to pass. Day 15 avoids month-length edge cases (e.g. no Feb 30). */
+    /** Backdates a payment's billing_period by one calendar month, so the
+     * rollover job's "has the calendar reached the next period yet" gate
+     * is satisfied in a test without waiting for real time to pass. Day 15
+     * avoids month-length edge cases (e.g. no Feb 30).
+     *
+     * due_date is forced to a fixed, unconditionally-old instant
+     * (GRACE_PERIOD_DAYS + 30 days back) rather than
+     * paymentService.periodDueDate(previousPeriod) (end of the previous
+     * calendar month) — those are NOT the same thing, and using the
+     * latter caused a real CI flake: "end of previous month" is only
+     * actually more than GRACE_PERIOD_DAYS in the past if today happens to
+     * be more than GRACE_PERIOD_DAYS days into the current month. A suite
+     * run on, say, the 1st-5th of a month would compute a due_date still
+     * inside the grace window, so overdue-check.job correctly left the
+     * payment PENDING instead of OVERDUE — the job was right, the test's
+     * date math was calendar-day-dependent when it needed to be
+     * unconditional (see the already-passing overdue-check.job tests
+     * above, which use this same Date.now()-relative pattern for exactly
+     * this reason). billing_period (read by the rollover gate) and
+     * due_date (read by the overdue gate) are independent schema fields,
+     * so decoupling them here is safe and matches how each job actually
+     * reads the record. */
     async function backdateToPreviousPeriod(payment) {
       const now = new Date();
       const previousMonthDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15));
       const previousPeriod = paymentService.billingPeriodOf(previousMonthDate);
       await Payment.findByIdAndUpdate(payment._id, {
         billing_period: previousPeriod,
-        due_date: paymentService.periodDueDate(previousPeriod),
+        due_date: new Date(Date.now() - (paymentService.GRACE_PERIOD_DAYS + 30) * 24 * 60 * 60 * 1000),
       });
       return previousPeriod;
     }
