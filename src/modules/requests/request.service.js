@@ -163,7 +163,7 @@ async function confirmRequest(requestId, actorUserId) {
     );
   }
 
-  const rental = await rentalService.createRentalFromRequest(request, actorUserId);
+  const rental = await rentalService.createRentalFromRequest(request, actorUserId, lockedBed.monthly_rent);
 
   const updated = await requestRepository.updateById(requestId, {
     status: REQUEST_STATUS.APPROVED,

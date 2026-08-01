@@ -28,6 +28,15 @@ function validateCreateFields(body) {
     }
   }
 
+  // Added in Phase 5 — see bed.model.js's monthly_rent comment.
+  if (body.monthly_rent !== undefined) {
+    if (typeof body.monthly_rent !== 'number' || Number.isNaN(body.monthly_rent) || body.monthly_rent < 0) {
+      errors.push('monthly_rent must be a non-negative number');
+    } else {
+      data.monthly_rent = body.monthly_rent;
+    }
+  }
+
   return { data, errors };
 }
 
@@ -48,6 +57,15 @@ function validateUpdateFields(body) {
       errors.push(`status must be one of: ${Object.values(BED_STATUS).join(', ')}`);
     } else {
       data.status = body.status;
+    }
+  }
+
+  // Added in Phase 5 — see bed.model.js's monthly_rent comment.
+  if (body.monthly_rent !== undefined) {
+    if (typeof body.monthly_rent !== 'number' || Number.isNaN(body.monthly_rent) || body.monthly_rent < 0) {
+      errors.push('monthly_rent must be a non-negative number');
+    } else {
+      data.monthly_rent = body.monthly_rent;
     }
   }
 

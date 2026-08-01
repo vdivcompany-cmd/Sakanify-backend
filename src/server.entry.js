@@ -10,6 +10,8 @@ const env = require('./config/env.config');
 const { connectDB } = require('./config/database.config');
 const scheduler = require('./shared/jobs/scheduler.core');
 const requestExpiryJob = require('./modules/requests/request-expiry.job');
+const paymentRolloverJob = require('./modules/payments/payment-rollover.job');
+const overdueCheckJob = require('./modules/payments/overdue-check.job');
 
 async function start() {
   await connectDB();
@@ -19,6 +21,9 @@ async function start() {
   // this call.
   // Phase 4: auto-expire unanswered bed requests after 48h.
   requestExpiryJob.register(scheduler);
+  // Phase 5: recurring monthly billing rollover + overdue detection.
+  paymentRolloverJob.register(scheduler);
+  overdueCheckJob.register(scheduler);
   scheduler.startAll();
 
   const server = app.listen(env.port, () => {

@@ -28,6 +28,8 @@ async function createBed(apartmentId, buildingId, ownerId, data) {
     owner_id: ownerId,
     room_label: data.room_label || null,
     status: BED_STATUS.AVAILABLE,
+    // Phase 5 addition — see bed.model.js's monthly_rent comment.
+    monthly_rent: data.monthly_rent || 0,
   });
 }
 

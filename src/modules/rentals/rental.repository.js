@@ -30,6 +30,27 @@ function updateById(rentalId, updates) {
 }
 
 /**
+ * Batch of rentals still active or vacating — used by
+ * payments/payment-rollover.job (Phase 5) to decide which rentals should
+ * keep generating monthly Payment records; a `closed` rental stops
+ * appearing here, which is what makes rollover stop generating new
+ * periods once a tenancy ends (phase spec step 5). Sorted by _id, not
+ * skip/limit-unsafe mutation ordering — rentals don't leave this result
+ * set mid-sweep the way expiring requests do, so plain skip/limit batching
+ * is safe here (unlike request-expiry.job's re-query-per-batch approach).
+ */
+function findActiveOrVacatingBatch({ skip = 0, limit = 200 } = {}) {
+  return Rental.find({ status: { $in: [RENTAL_STATUS.ACTIVE, RENTAL_STATUS.VACATING] } })
+    .sort({ _id: 1 })
+    .skip(skip)
+    .limit(limit);
+}
+
+function countActiveOrVacating() {
+  return Rental.countDocuments({ status: { $in: [RENTAL_STATUS.ACTIVE, RENTAL_STATUS.VACATING] } });
+}
+
+/**
  * Does an active or vacating (i.e. not yet closed) rental exist linking
  * this student to this owner? Backs both: (a) the owner-facing KYC-view
  * isolation check (Phase 4 step 10), and (b) the Phase 3 deletion
@@ -72,4 +93,6 @@ module.exports = {
   existsActiveOrVacatingForStudentAndOwner,
   existsActiveOrVacatingForBed,
   existsActiveOrVacatingForBeds,
+  findActiveOrVacatingBatch,
+  countActiveOrVacating,
 };

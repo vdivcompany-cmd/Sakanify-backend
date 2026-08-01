@@ -58,6 +58,22 @@ const bedSchema = new mongoose.Schema(
       default: BED_STATUS.AVAILABLE,
     },
 
+    // Added in Phase 5 (Docs/phase-5-cash-payment.md) — the owner-set
+    // monthly listing price, in EGP. Payment.amount_due is never
+    // recalculated from this field directly; it's copied onto
+    // rental.monthly_rent at confirmation time (see rental.model.js) and
+    // locked in for that tenancy, so a later price change here only
+    // affects future/new rentals. Additive field on an already-closed
+    // Phase 3 model — defaults to 0 so existing beds created before this
+    // phase remain valid without a data migration (project owner decision,
+    // Phase 5 kickoff).
+    monthly_rent: {
+      type: Number,
+      required: false,
+      default: 0,
+      min: 0,
+    },
+
     created_at: {
       type: Date,
       default: () => new Date(),

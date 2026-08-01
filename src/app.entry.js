@@ -69,6 +69,9 @@ app.use('/api/audit', require('./modules/audit/audit.routes'));
 app.use('/api/requests', require('./modules/requests/request.routes'));
 app.use('/api/rentals', require('./modules/rentals/rental.routes'));
 
+// Phase 5: Cash Payment Tracking (recurring monthly billing)
+app.use('/api/payments', require('./modules/payments/payment.routes'));
+
 // --- 404 fallback for unknown routes ---
 app.use((req, res) => {
   return res.status(404).json({ success: false, message: `Route not found: ${req.method} ${req.originalUrl}` });

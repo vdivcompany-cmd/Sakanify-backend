@@ -15,6 +15,11 @@
 const rentalRepository = require('./rental.repository');
 const bedService = require('../beds/bed.service');
 const auditService = require('../audit/audit.service');
+// Payment.service only ever reads Rental data through rental.repository
+// (never rental.service), so this require has no load-order cycle — see
+// createRentalFromRequest below for why this module needs it (Phase 5
+// step 2: a confirmed rental always generates its first Payment record).
+const paymentService = require('../payments/payment.service');
 const { BED_STATUS, RENTAL_STATUS } = require('../../config/constants.config');
 const { AppError } = require('../../middleware/error-handler.middleware');
 
@@ -24,8 +29,19 @@ const { AppError } = require('../../middleware/error-handler.middleware');
  * does not touch bed status at all — that guarantee lives entirely in
  * request.service/bed.service, per CLAUDE.md Section 7.2 (this stays
  * focused on rental creation only).
+ *
+ * `monthlyRent` (Phase 5 addition) is the bed's monthly_rent at this exact
+ * moment, passed in by request.service.confirmRequest from the bed it just
+ * transitioned — snapshotted onto rental.monthly_rent so it never drifts if
+ * the bed's listing price changes later (see rental.model.js).
+ *
+ * After the rental itself is created, this also generates the rental's
+ * first Payment record (Docs/phase-5-cash-payment.md step 2) via
+ * payment.service, so a confirmed rental always has its first billing
+ * period's payment waiting from the moment it goes active — never through
+ * direct DB access into the Payments collection (CLAUDE.md Section 7.2).
  */
-async function createRentalFromRequest(request, actorUserId) {
+async function createRentalFromRequest(request, actorUserId, monthlyRent) {
   const rental = await rentalRepository.create({
     student: request.student,
     bed: request.bed,
@@ -35,6 +51,7 @@ async function createRentalFromRequest(request, actorUserId) {
     status: RENTAL_STATUS.ACTIVE,
     confirmed_date: new Date(),
     move_in_date: request.move_in_date || null,
+    monthly_rent: monthlyRent || 0,
   });
 
   await auditService.writeAuditLog({
@@ -44,6 +61,8 @@ async function createRentalFromRequest(request, actorUserId) {
     entityId: rental._id,
     afterState: { status: RENTAL_STATUS.ACTIVE, bed: request.bed.toString() },
   });
+
+  await paymentService.createInitialPaymentForRental(rental, actorUserId);
 
   return rental;
 }
@@ -156,6 +175,19 @@ async function anyBedHasActiveRental(bedIds) {
   return Boolean(await rentalRepository.existsActiveOrVacatingForBeds(bedIds));
 }
 
+/**
+ * Phase 5 addition — the rollover job's source of "which rentals should
+ * still be generating monthly payments" (see rental.repository's doc
+ * comment on findActiveOrVacatingBatch).
+ */
+async function listActiveOrVacatingForRollover({ skip, limit }) {
+  return rentalRepository.findActiveOrVacatingBatch({ skip, limit });
+}
+
+async function countActiveOrVacatingForRollover() {
+  return rentalRepository.countActiveOrVacating();
+}
+
 module.exports = {
   createRentalFromRequest,
   getRentalById,
@@ -165,4 +197,6 @@ module.exports = {
   hasActiveRelationshipWithOwner,
   bedHasActiveRental,
   anyBedHasActiveRental,
+  listActiveOrVacatingForRollover,
+  countActiveOrVacatingForRollover,
 };

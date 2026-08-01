@@ -26,14 +26,25 @@ const BED_STATUS = Object.freeze({
 });
 
 // --- Payment status (cash-only flow, Phase 5) ---
-// PENDING   -> awaiting the student to pay the owner in person
-// PAID      -> student says paid, awaiting owner confirmation
-// CONFIRMED -> owner confirmed cash receipt
-// OVERDUE   -> payment window passed unpaid
+// Recurring monthly billing model, finalized in
+// Docs/phase-5-cash-payment.md's "Product Decision Resolved Before
+// Implementation" section: there is no separate "student says paid"
+// intermediate step — the owner collects cash in person and directly
+// confirms in the dashboard, so confirmation IS the transition into
+// PAID/PARTIAL. This replaces the four-value PENDING/PAID/CONFIRMED/
+// OVERDUE set that was scaffolded here in an earlier phase (before the
+// recurring-billing decision was resolved) with the set the finalized
+// Phase 5 spec actually calls for. Flagged as a deviation from the
+// original scaffolding in the Phase 5 report — PAYMENT_STATUS is only
+// referenced from this file before Phase 5, so the rename is isolated.
+// PENDING -> awaiting the student to pay the owner in person this period
+// PAID    -> owner confirmed the full amount_due was collected in cash
+// PARTIAL -> owner confirmed a cash receipt less than amount_due
+// OVERDUE -> pending/partial past due_date + grace period, still unpaid
 const PAYMENT_STATUS = Object.freeze({
   PENDING: 'pending',
   PAID: 'paid',
-  CONFIRMED: 'confirmed',
+  PARTIAL: 'partial',
   OVERDUE: 'overdue',
 });
 

@@ -149,3 +149,14 @@ After completing any phase, confirm:
 - [ ] Indexes, pagination, and ownership-scoping (where applicable) are in place, per Sections 3 and 4.
 - [ ] Tests for critical/concurrent logic exist and pass, per Section 6.
 - [ ] The Arabic phase report + PDF have been generated per Section 1.
+
+---
+
+## 11. Git Operations — Never Run by Claude Desktop
+
+This project's sandbox environment has repeatedly proven unreliable for `git commit`/`git push`: it has silently failed to reach `github.com` while reporting success, and has repeatedly triggered `.git/index.lock` conflicts. To eliminate this entire class of problem:
+
+1. **Claude Desktop must never run `git add`, `git commit`, or `git push`.** Its job ends at editing/creating files on disk. Do not attempt any git operation, even if asked to "push" — decline and explain that git operations are handled by the project owner locally.
+2. **At the end of any coding task, clearly state**: (a) the phase/task is code-complete, (b) the full list of files changed or created, and (c) that it's ready for the project owner to commit and push locally. Do not claim or imply a push happened.
+3. **Verification (tests, CI results) still depends on a real push having happened** — so after stating readiness, wait for the project owner to confirm the push and share the real GitHub Actions result before treating anything as verified, per Section 6.
+4. The project owner runs `push.bat` (in the repo root) locally to commit and push in one step — this already handles stale `index.lock` cleanup automatically.

@@ -59,6 +59,19 @@ const rentalSchema = new mongoose.Schema(
       type: Date,
       required: true,
     },
+
+    // Added in Phase 5 (Docs/phase-5-cash-payment.md) — snapshotted from
+    // bed.monthly_rent at the moment this rental is confirmed (see
+    // rental.service.createRentalFromRequest), not recalculated from the
+    // bed on every read. This is the authoritative rent amount for the
+    // whole tenancy: every Payment record this rental generates copies
+    // amount_due from here, so a later price change on the bed only ever
+    // affects future/new rentals, never this one already in progress.
+    monthly_rent: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
     move_in_date: {
       type: Date,
       default: null,
