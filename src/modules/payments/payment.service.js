@@ -92,10 +92,28 @@ async function createInitialPaymentForRental(rental, actorUserId) {
 }
 
 /**
- * Called by payment-rollover.job once a rental's latest payment is
- * settled (PAID) — generates the next billing period's pending record.
- * Guards against duplicates via the unique index too, but checks first so
- * a normal sweep doesn't spam duplicate-key errors on every run.
+ * Called by payment-rollover.job on every sweep — generates the next
+ * billing period's pending record for a rental once the calendar has
+ * actually reached that period, regardless of whether the current latest
+ * period was ever settled.
+ *
+ * Revised per project owner decision after the initial Phase 5 delivery:
+ * rent accrues monthly on a fixed schedule whether or not the student paid
+ * the prior month — a student behind on rent still owes the next month,
+ * and the owner needs to see arrears accumulate across multiple periods
+ * (visible via the overdue-accounts view), not a single frozen period that
+ * never rolls forward until it's paid. This replaces the original
+ * "only roll forward once the latest period is PAID" gate.
+ *
+ * Guards against duplicates via the unique {rental, billing_period} index
+ * too, but checks first so a normal sweep doesn't spam duplicate-key
+ * errors on every run — this also makes re-running a sweep (e.g. the job
+ * firing twice, or a manual re-run) safe/idempotent.
+ *
+ * Catches up one missed period per call. If a rental somehow falls more
+ * than one period behind (e.g. the job didn't run for a few days), each
+ * subsequent daily sweep advances it by one more period until it's
+ * current — self-healing without needing a special backfill path.
  */
 async function generateNextPeriodPayment(rental, actorUserId = null) {
   const latest = await paymentRepository.findLatestForRental(rental._id);
@@ -106,16 +124,15 @@ async function generateNextPeriodPayment(rental, actorUserId = null) {
     return null;
   }
 
-  if (latest.status !== PAYMENT_STATUS.PAID) {
-    // Only settled periods roll forward (phase spec step 5: "once a
-    // period's payment is settled (paid) ... auto-generate the next
-    // period's pending record"). An unpaid/partial/overdue period stays
-    // the most recent one — the owner sees it in the overdue view instead
-    // of a second period silently stacking on top of an unresolved one.
+  const currentPeriod = billingPeriodOf(new Date());
+  const nextPeriod = nextBillingPeriod(latest.billing_period);
+
+  if (nextPeriod > currentPeriod) {
+    // The next period hasn't started yet on the calendar — never generate
+    // a future period early, independent of the latest period's status.
     return null;
   }
 
-  const nextPeriod = nextBillingPeriod(latest.billing_period);
   const existing = await paymentRepository.findByRentalAndPeriod(rental._id, nextPeriod);
   if (existing) {
     return null; // already rolled over (e.g. a previous sweep already handled it)

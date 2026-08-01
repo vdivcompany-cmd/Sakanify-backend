@@ -473,29 +473,77 @@ describe('Cash Payment Tracking (Phase 5) — Integration Tests', () => {
   });
 
   // ========================================================================
-  // payment-rollover.job — batch sweep, stops once a rental is closed
+  // payment-rollover.job — fixed-schedule monthly rollover (revised:
+  // generates the next period regardless of whether the prior one was
+  // settled — a student behind on rent still owes the next month, per
+  // project owner decision after the initial Phase 5 delivery).
   // ========================================================================
-  describe('payment-rollover.job — recurring monthly rollover', () => {
-    it('should generate the next billing period\'s pending payment once the current period is settled (paid)', async () => {
-      const { ownerToken, rentalId, payment } = await createActiveRentalWithPayment({ monthly_rent: 2500 });
-      await request(app).post(`/api/payments/${payment._id}/confirm`).set('Authorization', `Bearer ${ownerToken}`).send({});
+  describe('payment-rollover.job — fixed-schedule monthly rollover', () => {
+    /** Backdates a payment's billing_period/due_date by one calendar
+     * month, so the rollover job's "has the calendar reached the next
+     * period yet" gate is satisfied in a test without waiting for real
+     * time to pass. Day 15 avoids month-length edge cases (e.g. no Feb 30). */
+    async function backdateToPreviousPeriod(payment) {
+      const now = new Date();
+      const previousMonthDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15));
+      const previousPeriod = paymentService.billingPeriodOf(previousMonthDate);
+      await Payment.findByIdAndUpdate(payment._id, {
+        billing_period: previousPeriod,
+        due_date: paymentService.periodDueDate(previousPeriod),
+      });
+      return previousPeriod;
+    }
+
+    it('should generate the next billing period\'s pending payment once the calendar reaches it, even when the prior period is still PENDING (unsettled)', async () => {
+      const { rentalId, payment } = await createActiveRentalWithPayment({ monthly_rent: 2500 });
+      const previousPeriod = await backdateToPreviousPeriod(payment);
 
       const summary = await paymentRolloverJob.runRolloverSweep();
       expect(summary.totalGenerated).toBeGreaterThanOrEqual(1);
 
-      const nextPeriod = paymentService.nextBillingPeriod(payment.billing_period);
-      const rolled = await Payment.findOne({ rental: rentalId, billing_period: nextPeriod });
+      const currentPeriod = paymentService.nextBillingPeriod(previousPeriod);
+      const rolled = await Payment.findOne({ rental: rentalId, billing_period: currentPeriod });
       expect(rolled).not.toBeNull();
       expect(rolled.status).toBe(PAYMENT_STATUS.PENDING);
       expect(rolled.amount_due).toBe(2500);
+
+      // The prior (backdated) period must remain untouched — still PENDING,
+      // not silently resolved or skipped just because a new period exists.
+      const priorPayment = await Payment.findById(payment._id);
+      expect(priorPayment.status).toBe(PAYMENT_STATUS.PENDING);
 
       const auditEntry = await Audit.findOne({ entity_type: 'Payment', entity_id: rolled._id, action: 'payment_rolled_over' });
       expect(auditEntry).not.toBeNull();
       expect(auditEntry.actor).toBeNull();
     });
 
-    it('should NOT roll over a rental whose current period is still pending/unsettled', async () => {
+    it('should generate the next period even when the prior period has already been flagged OVERDUE — arrears accumulate across periods', async () => {
+      const { rentalId, payment } = await createActiveRentalWithPayment({ monthly_rent: 1800 });
+      const previousPeriod = await backdateToPreviousPeriod(payment);
+      await overdueCheckJob.runOverdueSweep(); // the backdated period is now well past due_date + grace
+
+      const priorAfterOverdueCheck = await Payment.findById(payment._id);
+      expect(priorAfterOverdueCheck.status).toBe(PAYMENT_STATUS.OVERDUE);
+
+      await paymentRolloverJob.runRolloverSweep();
+
+      const currentPeriod = paymentService.nextBillingPeriod(previousPeriod);
+      const rolled = await Payment.findOne({ rental: rentalId, billing_period: currentPeriod });
+      expect(rolled).not.toBeNull();
+      expect(rolled.status).toBe(PAYMENT_STATUS.PENDING);
+
+      // Both periods now coexist — the owner sees arrears accumulating
+      // (2 outstanding periods), not a single frozen one.
+      const outstandingCount = await Payment.countDocuments({
+        rental: rentalId,
+        status: { $in: [PAYMENT_STATUS.PENDING, PAYMENT_STATUS.OVERDUE] },
+      });
+      expect(outstandingCount).toBe(2);
+    });
+
+    it('should NOT generate a future period early — no rollover while the current period is still the latest on the calendar', async () => {
       const { rentalId, payment } = await createActiveRentalWithPayment();
+      // No backdating: payment.billing_period is the real current month.
 
       await paymentRolloverJob.runRolloverSweep();
 
@@ -504,27 +552,28 @@ describe('Cash Payment Tracking (Phase 5) — Integration Tests', () => {
       expect(rolled).toBeNull();
     });
 
-    it('should be idempotent: running the sweep twice after settlement must not create a duplicate next-period payment', async () => {
-      const { ownerToken, rentalId, payment } = await createActiveRentalWithPayment();
-      await request(app).post(`/api/payments/${payment._id}/confirm`).set('Authorization', `Bearer ${ownerToken}`).send({});
+    it('should be idempotent: running the sweep twice must not create a duplicate next-period payment (unique {rental, billing_period} index)', async () => {
+      const { rentalId, payment } = await createActiveRentalWithPayment();
+      const previousPeriod = await backdateToPreviousPeriod(payment);
 
       await paymentRolloverJob.runRolloverSweep();
       await paymentRolloverJob.runRolloverSweep();
 
-      const nextPeriod = paymentService.nextBillingPeriod(payment.billing_period);
-      const count = await Payment.countDocuments({ rental: rentalId, billing_period: nextPeriod });
+      const currentPeriod = paymentService.nextBillingPeriod(previousPeriod);
+      const count = await Payment.countDocuments({ rental: rentalId, billing_period: currentPeriod });
       expect(count).toBe(1);
     });
 
-    it('should stop generating new periods once the rental is closed', async () => {
+    it('should stop generating new periods once the rental is closed, even though the prior period was still unsettled', async () => {
       const { ownerToken, rentalId, payment } = await createActiveRentalWithPayment();
-      await request(app).post(`/api/payments/${payment._id}/confirm`).set('Authorization', `Bearer ${ownerToken}`).send({});
+      await backdateToPreviousPeriod(payment);
       await request(app).post(`/api/rentals/${rentalId}/finalize-move-out`).set('Authorization', `Bearer ${ownerToken}`);
 
-      await paymentRolloverJob.runRolloverSweep();
+      const summary = await paymentRolloverJob.runRolloverSweep();
+      expect(summary.totalScanned).toBe(0); // the closed rental never appears in the active/vacating batch at all
 
-      const nextPeriod = paymentService.nextBillingPeriod(payment.billing_period);
-      const rolled = await Payment.findOne({ rental: rentalId, billing_period: nextPeriod });
+      const currentPeriod = paymentService.billingPeriodOf(new Date());
+      const rolled = await Payment.findOne({ rental: rentalId, billing_period: currentPeriod });
       expect(rolled).toBeNull();
     });
   });

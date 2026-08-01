@@ -10,11 +10,9 @@ After completing the implementation of **any phase** (Phase 0 through Phase 8, o
 
 ### What Must Be Produced
 
-1. **A Markdown document written entirely in Arabic**, summarizing what was implemented in that phase.
-2. **A PDF version of the same document**, generated from the Markdown (using the project's PDF generation skill/tooling).
-3. Both files must be saved as project deliverables (not just shown in chat) and clearly named after the phase, e.g.:
+1. **A Markdown document written entirely in Arabic**, summarizing what was implemented in that phase. This is the only required deliverable — do NOT generate a PDF version. (Earlier phases required a PDF alongside the Markdown; that requirement is dropped as of this update — Markdown only, going forward.)
+2. The file must be saved as a project deliverable (not just shown in chat) and clearly named after the phase, e.g.:
    - `phase-4-booking-engine-report.md`
-   - `phase-4-booking-engine-report.pdf`
 
 ### Required Content of Each Phase Report (in Arabic)
 
@@ -31,7 +29,7 @@ Each report must include, at minimum:
 
 ### Timing Rule
 
-The documentation and PDF generation must happen **immediately after the phase's code is complete and passing its tests** — not batched at the end of the whole project, and not skipped even for small phases.
+The documentation must happen **immediately after the phase's code is complete and passing its tests** — not batched at the end of the whole project, and not skipped even for small phases.
 
 ### Language Rule
 
@@ -148,7 +146,7 @@ After completing any phase, confirm:
 - [ ] All implementation steps from the phase document are done, with no silent omissions.
 - [ ] Indexes, pagination, and ownership-scoping (where applicable) are in place, per Sections 3 and 4.
 - [ ] Tests for critical/concurrent logic exist and pass, per Section 6.
-- [ ] The Arabic phase report + PDF have been generated per Section 1.
+- [ ] The Arabic phase report has been generated per Section 1 (Markdown only).
 
 ---
 
@@ -160,3 +158,4 @@ This project's sandbox environment has repeatedly proven unreliable for `git com
 2. **At the end of any coding task, clearly state**: (a) the phase/task is code-complete, (b) the full list of files changed or created, and (c) that it's ready for the project owner to commit and push locally. Do not claim or imply a push happened.
 3. **Verification (tests, CI results) still depends on a real push having happened** — so after stating readiness, wait for the project owner to confirm the push and share the real GitHub Actions result before treating anything as verified, per Section 6.
 4. The project owner runs `push.bat` (in the repo root) locally to commit and push in one step — this already handles stale `index.lock` cleanup automatically.
+
