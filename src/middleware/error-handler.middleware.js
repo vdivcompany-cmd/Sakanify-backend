@@ -76,3 +76,4 @@ function errorHandler(err, req, res, next) {
 
 module.exports = errorHandler;
 module.exports.AppError = AppError;
+module.exports.normalizeError = normalizeError;

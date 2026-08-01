@@ -13,6 +13,22 @@ const { success, error } = require('../../shared/utils/response.util');
 const rentalService = require('./rental.service');
 const { ownershipScoping } = require('../../middleware/auth.middleware');
 const { parsePagination, buildMeta } = require('../../shared/utils/pagination.util');
+const { AppError, normalizeError } = require('../../middleware/error-handler.middleware');
+
+// Same reasoning as request.controller.handleControllerError: the old
+// `err.statusCode || 400` catch pattern silently collapsed every
+// non-AppError into an undiagnosable 400 with nothing logged anywhere
+// request-logger.middleware could capture (it only logs method/path/
+// status/time, never the body/error). This reuses the same
+// normalizeError classification the global error handler applies, and
+// logs the raw error for anything that isn't an expected AppError.
+function handleControllerError(res, err, context) {
+  if (!(err instanceof AppError)) {
+    console.error(`[rental.controller:${context}]`, err);
+  }
+  const { statusCode, message, errors } = normalizeError(err);
+  return error(res, { statusCode, message, errors });
+}
 
 /**
  * GET /api/rentals
@@ -30,7 +46,7 @@ async function listRentals(req, res) {
       meta: buildMeta(total, page, limit),
     });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'listRentals');
   }
 }
 
@@ -50,7 +66,7 @@ async function getRental(req, res) {
 
     return success(res, { statusCode: 200, message: 'Rental retrieved', data: rental });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'getRental');
   }
 }
 
@@ -72,7 +88,7 @@ async function markVacating(req, res) {
     const updated = await rentalService.markVacating(req.params.rentalId, req.user.userId);
     return success(res, { statusCode: 200, message: 'Rental marked as vacating', data: updated });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'markVacating');
   }
 }
 
@@ -93,7 +109,7 @@ async function finalizeMoveOut(req, res) {
     const updated = await rentalService.finalizeMoveOut(req.params.rentalId, req.user.userId);
     return success(res, { statusCode: 200, message: 'Move-out finalized — bed released', data: updated });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'finalizeMoveOut');
   }
 }
 

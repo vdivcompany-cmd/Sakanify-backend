@@ -10,12 +10,11 @@ After completing the implementation of **any phase** (Phase 0 through Phase 8, o
 
 ### What Must Be Produced
 
-**A Markdown document written entirely in Arabic**, summarizing what was implemented in that phase.
-
-The file must be saved as a project deliverable (not just shown in chat) and clearly named after the phase, e.g.:
-- `phase-4-booking-engine-report.md`
-
-**Note:** Only Markdown files are required. PDF generation is optional and not mandatory.
+1. **A Markdown document written entirely in Arabic**, summarizing what was implemented in that phase.
+2. **A PDF version of the same document**, generated from the Markdown (using the project's PDF generation skill/tooling).
+3. Both files must be saved as project deliverables (not just shown in chat) and clearly named after the phase, e.g.:
+   - `phase-4-booking-engine-report.md`
+   - `phase-4-booking-engine-report.pdf`
 
 ### Required Content of Each Phase Report (in Arabic)
 
@@ -32,7 +31,7 @@ Each report must include, at minimum:
 
 ### Timing Rule
 
-The documentation must be generated **immediately after the phase's code is complete and passing its tests** — not batched at the end of the whole project, and not skipped even for small phases.
+The documentation and PDF generation must happen **immediately after the phase's code is complete and passing its tests** — not batched at the end of the whole project, and not skipped even for small phases.
 
 ### Language Rule
 
@@ -104,6 +103,7 @@ This system is being designed for a real target of approximately **1,000 subscri
 1. **Follow the modular monolith structure exactly as specified in the phase and folder-structure documents** — do not introduce a different pattern (e.g., a shared "god model" file) without flagging it for review first.
 2. **Every module is self-contained**: routes, controller, service, model, validation. Cross-module logic goes through service calls, not direct database access into another module's collection.
 3. **Use the standardized API response format (from Phase 0) consistently across every single endpoint**, with no exceptions or ad-hoc response shapes.
+3a. **Never collapse an unclassified error into a generic status code** (e.g., `err.statusCode || 400` catching everything indiscriminately). Every controller's catch block must run the error through the shared classifier (`normalizeError()` or equivalent from the Phase 0 error-handler) so a Mongoose `CastError`, `ValidationError`, duplicate-key error, and a genuine unexpected bug each map to their correct, distinct status code — and any error that isn't an expected `AppError` must be logged (`console.error` or equivalent) so its real message/stack is visible in test output and production logs, not silently discarded. Discovered as a real defect during Phase 4 debugging — do not repeat this pattern in any new module, and flag it if found in an existing one.
 4. **Any deviation from the phase specification must be explicitly flagged in the phase report** (per Section 1) — silent deviations are not acceptable, even small ones like a renamed field.
 5. **Do not skip or silently simplify a specified step.** If a step seems unclear or a decision is genuinely required from the project owner, flag it in the report and ask, rather than guessing and proceeding.
 
@@ -148,4 +148,4 @@ After completing any phase, confirm:
 - [ ] All implementation steps from the phase document are done, with no silent omissions.
 - [ ] Indexes, pagination, and ownership-scoping (where applicable) are in place, per Sections 3 and 4.
 - [ ] Tests for critical/concurrent logic exist and pass, per Section 6.
-- [ ] The Arabic phase report (Markdown) has been generated per Section 1.
+- [ ] The Arabic phase report + PDF have been generated per Section 1.

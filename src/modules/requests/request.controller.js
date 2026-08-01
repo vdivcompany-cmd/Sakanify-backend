@@ -18,6 +18,7 @@ const studentService = require('../students/student.service');
 const { ownershipScoping } = require('../../middleware/auth.middleware');
 const { parsePagination, buildMeta } = require('../../shared/utils/pagination.util');
 const { REQUEST_REJECTION_REASON } = require('../../config/constants.config');
+const { AppError, normalizeError } = require('../../middleware/error-handler.middleware');
 
 function parseOptionalDate(value, fieldName, errors) {
   if (value === undefined || value === null || value === '') return null;
@@ -27,6 +28,33 @@ function parseOptionalDate(value, fieldName, errors) {
     return null;
   }
   return date;
+}
+
+/**
+ * Every catch block in this controller used to do a shallow
+ * `err.statusCode || 400`, which silently collapsed EVERY non-AppError
+ * (a Mongoose CastError/ValidationError, a duplicate-key error, a plain
+ * bug) into a generic, undiagnosable 400 — no classification, and nothing
+ * written to the CI logs, which is exactly what made the original CI
+ * failure (27/117 tests, every POST /api/requests returning 400) so hard
+ * to diagnose after the fact: request-logger.middleware only logs
+ * method/path/status/time, never the body, so the real error message was
+ * gone the moment this shallow catch ran.
+ *
+ * This helper reuses error-handler.middleware's normalizeError (the same
+ * classification the global error handler already applies to
+ * next(err)-routed errors) so AppError/CastError/ValidationError/
+ * duplicate-key errors resolve to their correct status codes here too —
+ * and, critically, console.error()s any error that ISN'T an expected
+ * AppError, so the next CI run's Jest output actually contains the real
+ * stack trace instead of a bare 400.
+ */
+function handleControllerError(res, err, context) {
+  if (!(err instanceof AppError)) {
+    console.error(`[request.controller:${context}]`, err);
+  }
+  const { statusCode, message, errors } = normalizeError(err);
+  return error(res, { statusCode, message, errors });
 }
 
 /**
@@ -54,7 +82,7 @@ async function createRequest(req, res) {
 
     return success(res, { statusCode: 201, message: 'Request created — bed locked pending owner review', data: request });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message, errors: err.errors || null });
+    return handleControllerError(res, err, 'createRequest');
   }
 }
 
@@ -74,7 +102,7 @@ async function getMyRequests(req, res) {
       meta: buildMeta(total, page, limit),
     });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'getMyRequests');
   }
 }
 
@@ -113,7 +141,7 @@ async function listPending(req, res) {
       meta: buildMeta(total, page, limit),
     });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'listPending');
   }
 }
 
@@ -139,7 +167,7 @@ async function confirmRequest(req, res) {
       data: result,
     });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'confirmRequest');
   }
 }
 
@@ -172,7 +200,7 @@ async function rejectRequest(req, res) {
 
     return success(res, { statusCode: 200, message: 'Request rejected — bed released', data: updated });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'rejectRequest');
   }
 }
 
