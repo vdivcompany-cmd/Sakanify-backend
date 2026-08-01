@@ -83,6 +83,7 @@ module.exports = {
   countByApartment,
   findAllByApartmentIds,
   updateById,
+  conditionalUpdateStatus,
   deleteById,
   aggregateStatusCounts,
 };
