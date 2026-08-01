@@ -132,6 +132,50 @@ function findOverdueCandidates(cutoffDate, batchSize) {
     .sort({ _id: 1 });
 }
 
+/**
+ * Phase 6 addition (Docs/phase-6-subscriptions.md, "Optional Utility Bill
+ * Splitting", step 9): atomically layers a student's utility share onto
+ * an existing Payment record — a single MongoDB pipeline update, not a
+ * read-then-write, same reasoning as atomicConfirm above (CLAUDE.md
+ * Section 6.2): two utility bills submitted for overlapping periods in
+ * quick succession must not lose one increment. Always recomputes
+ * amount_due = rent_amount + utility_amount from the (now-incremented)
+ * fields rather than incrementing amount_due separately, so the two never
+ * drift apart even under concurrent calls.
+ *
+ * Status is left untouched if it's already OVERDUE (a late payment that
+ * just got a utility charge added is still late, not silently reset to
+ * "pending"); otherwise it's re-derived from amount_paid vs. the new
+ * amount_due, same PAID/PARTIAL/PENDING logic as atomicConfirm.
+ */
+function addUtilityCharge(paymentId, shareAmount) {
+  return Payment.findOneAndUpdate(
+    { _id: paymentId },
+    [
+      { $set: { utility_amount: { $add: ['$utility_amount', shareAmount] } } },
+      { $set: { amount_due: { $add: ['$rent_amount', '$utility_amount'] } } },
+      {
+        $set: {
+          status: {
+            $cond: [
+              { $eq: ['$status', PAYMENT_STATUS.OVERDUE] },
+              PAYMENT_STATUS.OVERDUE,
+              {
+                $cond: [
+                  { $gte: ['$amount_paid', '$amount_due'] },
+                  PAYMENT_STATUS.PAID,
+                  { $cond: [{ $gt: ['$amount_paid', 0] }, PAYMENT_STATUS.PARTIAL, PAYMENT_STATUS.PENDING] },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    ],
+    { new: true },
+  );
+}
+
 module.exports = {
   create,
   findById,
@@ -144,4 +188,5 @@ module.exports = {
   updateById,
   atomicConfirm,
   findOverdueCandidates,
+  addUtilityCharge,
 };

@@ -18,6 +18,13 @@ const bedService = require('../beds/bed.service');
 const studentService = require('../students/student.service');
 const rentalService = require('../rentals/rental.service');
 const auditService = require('../audit/audit.service');
+// Phase 6 addition (Docs/phase-6-subscriptions.md, step 5's business
+// rule, wired in per explicit project-owner decision after the Phase 6
+// report — see that report's "Technical Decisions" section for the
+// resolved discussion). subscription.service has no back-edge into this
+// module (or into any module this one depends on), so this require has
+// no load-order cycle.
+const subscriptionService = require('../subscriptions/subscription.service');
 const dateUtil = require('../../shared/utils/date.util');
 const { BED_STATUS, REQUEST_STATUS, REQUEST_REJECTION_REASON } = require('../../config/constants.config');
 const { AppError } = require('../../middleware/error-handler.middleware');
@@ -66,6 +73,24 @@ async function createRequest(userId, bedId, { moveInDate = null, note = null } =
   }
 
   const bed = await bedService.getBedById(bedId);
+
+  // Phase 6 retrofit: a suspended owner's account cannot accept new
+  // student requests (Docs/phase-6-subscriptions.md, step 5). bed.owner_id
+  // is already the owner id (same denormalization used everywhere else in
+  // this codebase) — no need to resolve it via building/apartment.
+  // Checked before the atomic bed lock below, same reasoning as the
+  // duplicate-request cap above it: reject fast, never lock a bed for a
+  // request that's about to be refused anyway. Currently a dormant guard
+  // in practice — nothing in the codebase can set a subscription to
+  // "suspended" until Phase 7's Super-Admin flow exists — but wired in
+  // now rather than deferred, per the project owner's explicit decision.
+  const ownerCanAcceptRequests = await subscriptionService.canAcceptNewRequests(bed.owner_id);
+  if (!ownerCanAcceptRequests) {
+    throw new AppError(
+      "This building's owner account is currently suspended and cannot accept new requests.",
+      403,
+    );
+  }
 
   const lockedBed = await bedService.atomicTransition(bed._id, BED_STATUS.AVAILABLE, BED_STATUS.PENDING, userId);
   if (!lockedBed) {

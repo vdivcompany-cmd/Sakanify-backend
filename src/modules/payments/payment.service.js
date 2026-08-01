@@ -77,6 +77,12 @@ async function createInitialPaymentForRental(rental, actorUserId) {
     status: PAYMENT_STATUS.PENDING,
     amount_due: rental.monthly_rent,
     amount_paid: 0,
+    // Phase 6 retrofit (Docs/phase-6-subscriptions.md, step 8): every new
+    // payment record starts as pure rent, zero utility — a utility charge
+    // only ever gets layered on afterwards via applyUtilityCharge(), never
+    // set at creation time.
+    rent_amount: rental.monthly_rent,
+    utility_amount: 0,
     due_date: periodDueDate(billingPeriod),
   });
 
@@ -148,6 +154,9 @@ async function generateNextPeriodPayment(rental, actorUserId = null) {
     status: PAYMENT_STATUS.PENDING,
     amount_due: rental.monthly_rent,
     amount_paid: 0,
+    // Phase 6 retrofit — see createInitialPaymentForRental's comment above.
+    rent_amount: rental.monthly_rent,
+    utility_amount: 0,
     due_date: periodDueDate(nextPeriod),
   });
 
@@ -250,6 +259,86 @@ async function confirmPayment(paymentId, actorUserId, amountPaid) {
 }
 
 /**
+ * Phase 6 addition (Docs/phase-6-subscriptions.md, "Optional Utility Bill
+ * Splitting", step 9): find-or-create a rental's Payment record for an
+ * ARBITRARY billing period — unlike createInitialPaymentForRental /
+ * generateNextPeriodPayment, this is not restricted to "the current
+ * period" or "the next chronological period"; utility-bill.service calls
+ * this once per active student to guarantee that student's Payment
+ * record for the bill's billing_period exists before attaching a utility
+ * share to it, reusing this exact creation logic rather than duplicating
+ * it (per the phase spec's explicit instruction to reuse Phase 5's
+ * creation logic here). Idempotent — a second call for the same
+ * rental+period just returns the existing record, never a duplicate
+ * (still backstopped by the unique {rental, billing_period} index either
+ * way).
+ */
+async function ensurePaymentForPeriod(rental, billingPeriod, actorUserId = null) {
+  const existing = await paymentRepository.findByRentalAndPeriod(rental._id, billingPeriod);
+  if (existing) {
+    return existing;
+  }
+
+  const payment = await paymentRepository.create({
+    rental: rental._id,
+    student: rental.student,
+    bed: rental.bed,
+    building: rental.building,
+    owner_id: rental.owner_id,
+    billing_period: billingPeriod,
+    status: PAYMENT_STATUS.PENDING,
+    amount_due: rental.monthly_rent,
+    amount_paid: 0,
+    rent_amount: rental.monthly_rent,
+    utility_amount: 0,
+    due_date: periodDueDate(billingPeriod),
+  });
+
+  await auditService.writeAuditLog({
+    actor: actorUserId,
+    action: 'payment_created',
+    entityType: 'Payment',
+    entityId: payment._id,
+    afterState: { status: PAYMENT_STATUS.PENDING, billing_period: billingPeriod, amount_due: rental.monthly_rent },
+  });
+
+  return payment;
+}
+
+/**
+ * Phase 6 addition — layers a single student's utility-bill share onto
+ * their Payment record for the period (utility-bill.service calls this
+ * once per active student in the split). Atomic increment
+ * (payment.repository.addUtilityCharge), not read-then-write — see that
+ * function's doc comment. Writes the 'payment_utility_charge_applied'
+ * audit action required by the phase spec's step 11, in addition to (not
+ * instead of) utility-bill.service's own 'utility_bill_created' entry for
+ * the bill as a whole.
+ */
+async function applyUtilityCharge(paymentId, shareAmount, actorUserId = null) {
+  if (typeof shareAmount !== 'number' || Number.isNaN(shareAmount) || shareAmount <= 0) {
+    throw new AppError('Utility share amount must be a positive number', 422);
+  }
+
+  const before = await getPaymentById(paymentId);
+  const updated = await paymentRepository.addUtilityCharge(paymentId, shareAmount);
+  if (!updated) {
+    throw new AppError('Payment not found', 404);
+  }
+
+  await auditService.writeAuditLog({
+    actor: actorUserId,
+    action: 'payment_utility_charge_applied',
+    entityType: 'Payment',
+    entityId: paymentId,
+    beforeState: { utility_amount: before.utility_amount, amount_due: before.amount_due },
+    afterState: { utility_amount: updated.utility_amount, amount_due: updated.amount_due },
+  });
+
+  return updated;
+}
+
+/**
  * Flags a single pending/partial payment overdue. Called by
  * overdue-check.job in a batch loop, never directly from an HTTP route.
  * `actor` is null — automated, same pattern as request-expiry.job
@@ -275,6 +364,8 @@ async function flagOverdue(payment) {
 module.exports = {
   createInitialPaymentForRental,
   generateNextPeriodPayment,
+  ensurePaymentForPeriod,
+  applyUtilityCharge,
   getPaymentById,
   listPaymentsForOwner,
   listOverdueForOwner,

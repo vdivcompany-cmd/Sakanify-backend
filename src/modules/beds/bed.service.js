@@ -42,6 +42,17 @@ async function listBedsForApartment(apartmentId, { skip, limit }) {
 }
 
 /**
+ * Phase 6 addition (Docs/phase-6-subscriptions.md, step 2) — total bed
+ * count across all of an owner's buildings/apartments, used by
+ * subscription.service to compute usage against the owner's subscribed
+ * capacity, without subscription.service reaching into the Bed
+ * collection directly (CLAUDE.md Section 7.2).
+ */
+async function countBedsForOwner(ownerId) {
+  return bedRepository.countByOwner(ownerId);
+}
+
+/**
  * Bed count for a single apartment — used by apartment.service to decide
  * whether an apartment is safe to delete (implementation step 8), without
  * apartment.service reaching into the Bed collection directly
@@ -171,6 +182,7 @@ async function listAllBedsForApartments(apartmentIds) {
 
 module.exports = {
   createBed,
+  countBedsForOwner,
   listBedsForApartment,
   countBedsForApartment,
   getBedById,

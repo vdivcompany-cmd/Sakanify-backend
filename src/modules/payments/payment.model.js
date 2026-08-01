@@ -76,6 +76,37 @@ const paymentSchema = new mongoose.Schema(
       min: 0,
     },
 
+    // --- Phase 6 additive retrofit (Docs/phase-6-subscriptions.md, step 8:
+    // "Optional Utility Bill Splitting") ---
+    // amount_due = rent_amount + utility_amount going forward.
+    // rent_amount default is a FUNCTION, not a static value, specifically
+    // so it also applies when Mongoose hydrates an EXISTING payment
+    // document (created before this phase) that has no rent_amount field
+    // stored in Mongo at all — Mongoose applies schema defaults during
+    // document hydration for any path missing from the raw DB record, and
+    // a function default is evaluated with `this` bound to that same
+    // hydrated document, so it reads the document's own (already-loaded)
+    // amount_due. This is what makes the migration non-breaking without a
+    // separate backfill script: `rent_amount = amount_due` and
+    // `utility_amount = 0` for every pre-Phase-6 record, satisfied purely
+    // by reading through the schema — see the Phase 6 report's "Technical
+    // Decisions" section. payment.service's creation paths (initial
+    // payment + rollover + ensurePaymentForPeriod) set both fields
+    // explicitly for every NEW record going forward, so this default only
+    // ever matters for pre-existing data.
+    rent_amount: {
+      type: Number,
+      min: 0,
+      default: function rentAmountDefault() {
+        return this.amount_due;
+      },
+    },
+    utility_amount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     // End of the billing_period month, plus the grace window defined in
     // payment.service — overdue-check.job compares against this field.
     // Not explicitly listed in the phase spec's field list, but required

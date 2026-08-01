@@ -24,6 +24,16 @@ function countByApartment(apartmentId) {
   return Bed.countDocuments({ apartment: apartmentId });
 }
 
+// Phase 6 addition (Docs/phase-6-subscriptions.md, step 2): total bed
+// count across every building/apartment an owner has — the "actual bed
+// count" subscription.service compares against the owner's subscribed
+// capacity. Counts ALL beds regardless of status (available, occupied,
+// etc.) since subscription capacity limits how many beds an owner can
+// CREATE, not how many are currently rented.
+function countByOwner(ownerId) {
+  return Bed.countDocuments({ owner_id: ownerId });
+}
+
 // Unpaginated, single query for many apartments at once — used by the
 // nested building->apartments->beds read so fetching N apartments' beds
 // never turns into N queries (CLAUDE.md Section 4.4).

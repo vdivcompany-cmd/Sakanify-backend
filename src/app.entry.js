@@ -72,6 +72,10 @@ app.use('/api/rentals', require('./modules/rentals/rental.routes'));
 // Phase 5: Cash Payment Tracking (recurring monthly billing)
 app.use('/api/payments', require('./modules/payments/payment.routes'));
 
+// Phase 6: Owner Subscriptions & Bed Capacity + Optional Utility Bill Splitting
+app.use('/api/subscriptions', require('./modules/subscriptions/subscription.routes'));
+app.use('/api/utilities', require('./modules/utilities/utility-bill.routes'));
+
 // --- 404 fallback for unknown routes ---
 app.use((req, res) => {
   return res.status(404).json({ success: false, message: `Route not found: ${req.method} ${req.originalUrl}` });

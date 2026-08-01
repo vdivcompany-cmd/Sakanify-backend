@@ -84,6 +84,18 @@ function existsActiveOrVacatingForBeds(bedIds) {
   return Rental.exists({ bed: { $in: bedIds }, status: { $in: [RENTAL_STATUS.ACTIVE, RENTAL_STATUS.VACATING] } });
 }
 
+/**
+ * Phase 6 addition (Docs/phase-6-subscriptions.md, "Optional Utility Bill
+ * Splitting", step 9): the actual rental documents (not just an
+ * exists() boolean) for every active-or-vacating tenancy across a set of
+ * beds — utility-bill.service's source of "who are the apartment's
+ * currently active students to split this bill across." One query
+ * regardless of how many beds the apartment has (CLAUDE.md Section 4.4).
+ */
+function findActiveOrVacatingForBeds(bedIds) {
+  return Rental.find({ bed: { $in: bedIds }, status: { $in: [RENTAL_STATUS.ACTIVE, RENTAL_STATUS.VACATING] } });
+}
+
 module.exports = {
   create,
   findById,
@@ -93,6 +105,7 @@ module.exports = {
   existsActiveOrVacatingForStudentAndOwner,
   existsActiveOrVacatingForBed,
   existsActiveOrVacatingForBeds,
+  findActiveOrVacatingForBeds,
   findActiveOrVacatingBatch,
   countActiveOrVacating,
 };

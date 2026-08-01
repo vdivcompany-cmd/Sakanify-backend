@@ -19,6 +19,7 @@ const bedService = require('../beds/bed.service');
 const rentalService = require('../rentals/rental.service');
 const { ownershipScoping } = require('../../middleware/auth.middleware');
 const { parsePagination, buildMeta } = require('../../shared/utils/pagination.util');
+const { AppError, normalizeError } = require('../../middleware/error-handler.middleware');
 
 function validateBuildingFields(body, { partial = false } = {}) {
   const errors = [];
@@ -203,6 +204,44 @@ async function getOccupancy(req, res) {
   }
 }
 
+/**
+ * PATCH /api/buildings/:buildingId/utilities-setting
+ * Owner only, ownership-scoped. Phase 6 addition (Docs/phase-6-subscriptions.md,
+ * step 7): toggle whether this building's rent already includes utilities
+ * (default true — opt-in only). Uses normalizeError() per CLAUDE.md
+ * Section 7.3a — applied here since this is new Phase 6 code, even though
+ * the rest of this already-closed Phase 3 controller predates that rule
+ * (flagged, not silently fixed elsewhere, in the Phase 6 report).
+ */
+async function updateUtilitiesSetting(req, res) {
+  try {
+    const building = await buildingService.getBuildingById(req.params.buildingId);
+
+    try {
+      ownershipScoping(req.user.ownerId, building.owner_id);
+    } catch (scopeErr) {
+      return error(res, { statusCode: 403, message: scopeErr.message });
+    }
+
+    if (typeof req.body.utilities_included_in_rent !== 'boolean') {
+      throw new AppError('utilities_included_in_rent must be a boolean', 422);
+    }
+
+    const updated = await buildingService.setUtilitiesIncludedInRent(
+      req.params.buildingId,
+      req.body.utilities_included_in_rent,
+      req.user.userId,
+    );
+    return success(res, { statusCode: 200, message: 'Utilities setting updated', data: updated });
+  } catch (err) {
+    if (!(err instanceof AppError)) {
+      console.error('[building.controller:updateUtilitiesSetting]', err);
+    }
+    const { statusCode, message, errors } = normalizeError(err);
+    return error(res, { statusCode, message, errors });
+  }
+}
+
 module.exports = {
   createBuilding,
   listBuildings,
@@ -210,4 +249,5 @@ module.exports = {
   updateBuilding,
   deleteBuilding,
   getOccupancy,
+  updateUtilitiesSetting,
 };

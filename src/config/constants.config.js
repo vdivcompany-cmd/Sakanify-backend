@@ -88,6 +88,38 @@ const RENTAL_STATUS = Object.freeze({
   CLOSED: 'closed',
 });
 
+// --- Owner subscription status (Phase 6) ---
+// ACTIVE    -> in good standing, normal usage rules apply
+// OVERDUE   -> subscription payment (the owner's own bill to Sakanify, not
+//              a student's rent) is late; a grace-period concept mirroring
+//              PAYMENT_STATUS.OVERDUE, but for the owner's own account
+// SUSPENDED -> capacity/feature use is blocked; business rule ("a suspended
+//              owner may be blocked from accepting new requests") is
+//              exposed as subscriptionService.canAcceptNewRequests() but
+//              deliberately NOT wired into request.service in this phase
+//              — see the Phase 6 report's "Deviations" section for why
+const SUBSCRIPTION_STATUS = Object.freeze({
+  ACTIVE: 'active',
+  OVERDUE: 'overdue',
+  SUSPENDED: 'suspended',
+});
+
+// --- Bed-capacity expansion request status (Phase 6) ---
+// Embedded on subscription.model (expansion_requests[]) — Phase 7's
+// Super-Admin expansion queue is the consumer of PENDING entries here.
+const EXPANSION_REQUEST_STATUS = Object.freeze({
+  PENDING: 'pending',
+  APPROVED: 'approved',
+  REJECTED: 'rejected',
+});
+
+// --- Utility bill type (Phase 6 — optional utility bill splitting) ---
+const UTILITY_BILL_TYPE = Object.freeze({
+  ELECTRICITY: 'electricity',
+  WATER: 'water',
+  GAS: 'gas',
+});
+
 module.exports = {
   ROLES,
   BED_STATUS,
@@ -95,4 +127,7 @@ module.exports = {
   REQUEST_STATUS,
   REQUEST_REJECTION_REASON,
   RENTAL_STATUS,
+  SUBSCRIPTION_STATUS,
+  EXPANSION_REQUEST_STATUS,
+  UTILITY_BILL_TYPE,
 };

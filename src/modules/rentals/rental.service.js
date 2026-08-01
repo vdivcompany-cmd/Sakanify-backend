@@ -188,6 +188,20 @@ async function countActiveOrVacatingForRollover() {
   return rentalRepository.countActiveOrVacating();
 }
 
+/**
+ * Phase 6 addition (Docs/phase-6-subscriptions.md, "Optional Utility Bill
+ * Splitting", step 9): the apartment's actual currently-active rentals
+ * (active or vacating — same "still living there, still paying rent"
+ * definition used everywhere else in this codebase, e.g.
+ * anyBedHasActiveRental above), given the apartment's bed ids.
+ * utility-bill.service calls this instead of touching the Rentals
+ * collection directly, per CLAUDE.md Section 7.2.
+ */
+async function listActiveOrVacatingRentalsForBeds(bedIds) {
+  if (!bedIds || bedIds.length === 0) return [];
+  return rentalRepository.findActiveOrVacatingForBeds(bedIds);
+}
+
 module.exports = {
   createRentalFromRequest,
   getRentalById,
@@ -197,6 +211,7 @@ module.exports = {
   hasActiveRelationshipWithOwner,
   bedHasActiveRental,
   anyBedHasActiveRental,
+  listActiveOrVacatingRentalsForBeds,
   listActiveOrVacatingForRollover,
   countActiveOrVacatingForRollover,
 };

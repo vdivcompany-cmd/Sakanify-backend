@@ -31,9 +31,11 @@ const Kyc = require('../../src/modules/kyc/kyc.model');
 const RequestModel = require('../../src/modules/requests/request.model');
 const Rental = require('../../src/modules/rentals/rental.model');
 const Audit = require('../../src/modules/audit/audit.model');
+const Subscription = require('../../src/modules/subscriptions/subscription.model');
 
 const authService = require('../../src/modules/auth/auth.service');
 const requestExpiryJob = require('../../src/modules/requests/request-expiry.job');
+const subscriptionService = require('../../src/modules/subscriptions/subscription.service');
 const { ROLES, BED_STATUS, REQUEST_STATUS, RENTAL_STATUS, REQUEST_REJECTION_REASON } = require('../../src/config/constants.config');
 
 let mongoServer;
@@ -143,6 +145,7 @@ beforeEach(async () => {
   await RequestModel.deleteMany({});
   await Rental.deleteMany({});
   await Audit.deleteMany({});
+  await Subscription.deleteMany({});
 });
 
 describe('Booking Engine (Requests & Rentals) — Integration Tests', () => {
@@ -216,6 +219,75 @@ describe('Booking Engine (Requests & Rentals) — Integration Tests', () => {
         .send({ bed_id: bed._id.toString() });
 
       expect(res.status).toBe(409);
+    });
+  });
+
+  // ========================================================================
+  // Phase 6 retrofit: a suspended owner's subscription blocks new requests
+  // (Docs/phase-6-subscriptions.md, step 5; wired into
+  // request.service.createRequest() per explicit project-owner decision
+  // after the Phase 6 report — see that report's "Technical Decisions"
+  // section).
+  // ========================================================================
+  describe('Subscription Gating (Phase 6 retrofit)', () => {
+    it('should reject creating a request when the bed\'s owner has a SUSPENDED subscription, and must NOT lock the bed', async () => {
+      const { ownerId } = await createOwner();
+      await subscriptionService.createSubscription(ownerId, {
+        tierName: '10-bed package',
+        totalBedCapacity: 10,
+        monthlyPrice: 1000,
+        renewalDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      });
+      await subscriptionService.updateStatus(ownerId, 'suspended');
+
+      const { bed } = await createBedFixture(ownerId);
+      const { token } = await createStudent();
+
+      const res = await request(app)
+        .post('/api/requests')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ bed_id: bed._id.toString() });
+
+      expect(res.status).toBe(403);
+
+      // The bed must NOT have been locked — the subscription check
+      // happens before the atomic bed transition, same as the
+      // duplicate-request cap.
+      const freshBed = await Bed.findById(bed._id);
+      expect(freshBed.status).toBe(BED_STATUS.AVAILABLE);
+    });
+
+    it('should still allow creating a request when the owner has no subscription provisioned at all (guard is a no-op, not a hard requirement)', async () => {
+      const { ownerId } = await createOwner();
+      // No Subscription document created for this owner at all.
+      const { bed } = await createBedFixture(ownerId);
+      const { token } = await createStudent();
+
+      const res = await request(app)
+        .post('/api/requests')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ bed_id: bed._id.toString() });
+
+      expect(res.status).toBe(201);
+    });
+
+    it('should allow creating a request when the owner subscription is ACTIVE (not suspended)', async () => {
+      const { ownerId } = await createOwner();
+      await subscriptionService.createSubscription(ownerId, {
+        tierName: '10-bed package',
+        totalBedCapacity: 10,
+        monthlyPrice: 1000,
+        renewalDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      });
+      const { bed } = await createBedFixture(ownerId);
+      const { token } = await createStudent();
+
+      const res = await request(app)
+        .post('/api/requests')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ bed_id: bed._id.toString() });
+
+      expect(res.status).toBe(201);
     });
   });
 

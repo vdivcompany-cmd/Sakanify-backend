@@ -10,6 +10,7 @@
 const buildingRepository = require('./building.repository');
 const apartmentService = require('../apartments/apartment.service');
 const bedService = require('../beds/bed.service');
+const auditService = require('../audit/audit.service');
 const { AppError } = require('../../middleware/error-handler.middleware');
 
 async function createBuilding(ownerId, data) {
@@ -105,6 +106,35 @@ async function getBuildingOccupancy(buildingId) {
   return bedService.computeOccupancy({ buildingId });
 }
 
+/**
+ * Phase 6 addition (Docs/phase-6-subscriptions.md, step 7): owner-facing
+ * toggle for the "does this building's rent already include utilities"
+ * setting. Defaults to `true` on every building (see building.model.js),
+ * so this is purely opt-in — nothing changes for an owner who never calls
+ * this. A dedicated function (rather than routing it through the generic
+ * updateBuilding) so the audit trail records this specific business event
+ * with its own action name, distinct from a plain field edit.
+ */
+async function setUtilitiesIncludedInRent(buildingId, utilitiesIncludedInRent, actorUserId) {
+  const building = await getBuildingById(buildingId); // 404 if missing
+  const before = building.utilities_included_in_rent;
+
+  const updated = await buildingRepository.updateById(buildingId, {
+    utilities_included_in_rent: utilitiesIncludedInRent,
+  });
+
+  await auditService.writeAuditLog({
+    actor: actorUserId,
+    action: 'building_utilities_setting_changed',
+    entityType: 'Building',
+    entityId: buildingId,
+    beforeState: { utilities_included_in_rent: before },
+    afterState: { utilities_included_in_rent: updated.utilities_included_in_rent },
+  });
+
+  return updated;
+}
+
 module.exports = {
   createBuilding,
   listBuildingsForOwner,
@@ -113,4 +143,5 @@ module.exports = {
   updateBuilding,
   deleteBuilding,
   getBuildingOccupancy,
+  setUtilitiesIncludedInRent,
 };

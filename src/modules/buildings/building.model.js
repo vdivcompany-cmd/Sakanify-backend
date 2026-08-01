@@ -42,6 +42,19 @@ const buildingSchema = new mongoose.Schema(
       details: { type: String, trim: true, default: null }, // building number, landmark, etc.
     },
 
+    // Phase 6 (Docs/phase-6-subscriptions.md, "Optional Utility Bill
+    // Splitting") additive retrofit onto this already-closed Phase 3
+    // model. Defaults to `true` so every existing building's behavior is
+    // completely unchanged unless the owner explicitly opts in to
+    // splitting for that specific building — see
+    // utility-bill.service.submitBill, which rejects a bill submission
+    // outright whenever this is still `true` for the apartment's
+    // building.
+    utilities_included_in_rent: {
+      type: Boolean,
+      default: true,
+    },
+
     created_at: {
       type: Date,
       default: () => new Date(),

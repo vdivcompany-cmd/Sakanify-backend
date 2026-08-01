@@ -23,6 +23,7 @@ router.get('/:buildingId', buildingController.getBuilding);
 router.patch('/:buildingId', buildingController.updateBuilding);
 router.delete('/:buildingId', buildingController.deleteBuilding);
 router.get('/:buildingId/occupancy', buildingController.getOccupancy);
+router.patch('/:buildingId/utilities-setting', buildingController.updateUtilitiesSetting);
 
 // --- Apartments nested under a building ---
 router.post('/:buildingId/apartments', apartmentController.createApartment);
