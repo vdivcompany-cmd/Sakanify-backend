@@ -17,6 +17,22 @@ const rateLimiter = rateLimit({
   max: MAX_REQUESTS,
   standardHeaders: true,
   legacyHeaders: false,
+  // Regression fix (post-hardening-pass): this global limiter's scope/
+  // mounting order in app.entry.js never changed — it was already applied
+  // to every route, before and after the hardening pass. What changed is
+  // that the integration suite grew (new subscription-capacity tests in
+  // buildings-apartments-beds.test.js), and that one file already fires
+  // 100+ HTTP requests against a single shared app/limiter instance
+  // (Jest's per-file module registry — the same reason auth.routes.js's
+  // OTP/login limiters needed an explicit resetAll() mechanism for
+  // cross-`it()`-block isolation within one file, documented there).
+  // Unlike those route-specific limiters, nothing in the test suite
+  // asserts on *this* global limiter's 429 behavior (confirmed: every
+  // existing 429 test targets otpLimiter/loginLimiter/browsingLimiter/
+  // leadLimiter specifically), so skipping it in NODE_ENV=test removes a
+  // latent test-suite-size ceiling with zero loss of real coverage.
+  // Production/development behavior is completely unchanged.
+  skip: () => process.env.NODE_ENV === 'test',
   handler: (req, res) => {
     error(res, {
       statusCode: 429,

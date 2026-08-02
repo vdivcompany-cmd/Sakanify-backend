@@ -14,6 +14,7 @@
  */
 
 const { AppError, normalizeError } = require('../../src/middleware/error-handler.middleware');
+const { UnsupportedFileTypeError } = require('../../src/shared/utils/file-storage.adapter');
 
 describe('error-handler.middleware normalizeError', () => {
   const originalEnv = process.env.NODE_ENV;
@@ -73,5 +74,22 @@ describe('error-handler.middleware normalizeError', () => {
     err.statusCode = 404;
     const result = normalizeError(err);
     expect(result).toEqual({ statusCode: 404, message: 'Owner not found', errors: null });
+  });
+
+  it('classifies a rejected-file-content upload (UnsupportedFileTypeError) as a clean 400, not a 500', () => {
+    // Regression test: this error class has no `.statusCode` of its own
+    // shape recognized by name (unlike CastError/ValidationError/JWT
+    // errors), so before UnsupportedFileTypeError was given an explicit
+    // `this.statusCode = 400` in its constructor, it fell into
+    // normalizeError()'s final fallback branch and came back as an
+    // (incorrect) 500 once the Section 7.3a controller retrofit routed
+    // student.controller.registerStudent / kyc.controller.resubmitKyc
+    // through normalizeError() instead of the old `err.statusCode || 400`
+    // pattern, which had silently defaulted it to 400 by coincidence.
+    process.env.NODE_ENV = 'production';
+    const err = new UnsupportedFileTypeError('File content does not match an allowed image type (jpeg/png/webp)');
+    const result = normalizeError(err);
+    expect(result.statusCode).toBe(400);
+    expect(result.message).toBe('File content does not match an allowed image type (jpeg/png/webp)');
   });
 });

@@ -58,6 +58,20 @@ class UnsupportedFileTypeError extends Error {
   constructor(message) {
     super(message);
     this.name = 'UnsupportedFileTypeError';
+    // Regression fix (post-hardening-pass): before the Section 7.3a retrofit,
+    // every controller used `err.statusCode || 400`, so a plain Error with
+    // no `.statusCode` silently defaulted to 400. normalizeError()'s
+    // fallback branch defaults an unrecognized, un-tagged error to 500
+    // instead (correctly, for genuinely unexpected errors) — but this is
+    // NOT an unexpected error, it's an explicit, expected client mistake
+    // (rejected file content), so it must self-classify as a 400-class
+    // error rather than rely on a default that changed underneath it.
+    // This makes it flow through normalizeError()'s
+    // `err.statusCode && statusCode < 500` branch and come back as a
+    // clean 400 in every caller (kyc.service.createInitialKyc via
+    // student.controller.registerStudent, and kyc.service.resubmitKyc via
+    // kyc.controller.resubmitKyc — both retrofitted controllers).
+    this.statusCode = 400;
   }
 }
 
