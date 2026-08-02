@@ -25,6 +25,7 @@ const OTP = require('../../src/modules/auth/otp.model');
 const Student = require('../../src/modules/students/student.model');
 const Kyc = require('../../src/modules/kyc/kyc.model');
 const authService = require('../../src/modules/auth/auth.service');
+const otpService = require('../../src/modules/auth/otp.service');
 const { ROLES } = require('../../src/config/constants.config');
 
 let mongoServer;
@@ -55,8 +56,10 @@ const VALID_PROFILE_FIELDS = {
 };
 
 async function registerAndLoginStudent(phone) {
-  const otpRes = await request(app).post('/api/auth/request-otp').send({ phone });
-  const otpCode = otpRes.body.data._dev_code;
+  await request(app).post('/api/auth/request-otp').send({ phone });
+  // SEC-001 fix: the OTP code is no longer part of the response body —
+  // read it back from the store via the test-only accessor instead.
+  const otpCode = await otpService.__getLastOtpForPhone(phone);
   const loginRes = await request(app).post('/api/auth/verify-otp').send({ phone, code: otpCode });
   return loginRes.body.data.accessToken;
 }

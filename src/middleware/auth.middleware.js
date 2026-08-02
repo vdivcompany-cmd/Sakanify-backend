@@ -204,53 +204,23 @@ function ownershipScoping(authenticatedOwnerId, resourceOwnerId) {
   }
 }
 
-/**
- * Ownership scoping middleware for route handlers
- *
- * Validates that req.user.ownerId matches req.params.ownerId or req.body.owner_id
- *
- * Usage:
- *   router.post('/buildings/:ownerId', verifyToken, ownershipScopingMiddleware, controller);
- */
-function ownershipScopingMiddleware(req, res, next) {
-  if (!req.user) {
-    return error(res, {
-      statusCode: 401,
-      message: 'Authentication required',
-    });
-  }
-
-  // Super-admins bypass ownership scoping
-  if (req.user.role === 'super-admin') {
-    return next();
-  }
-
-  // For owners, validate they're accessing their own data
-  if (req.user.role === 'owner') {
-    const requestedOwnerId = req.params.ownerId || req.body.owner_id;
-
-    if (!requestedOwnerId) {
-      return error(res, {
-        statusCode: 400,
-        message: 'Missing owner_id in request',
-      });
-    }
-
-    if (req.user.ownerId !== requestedOwnerId) {
-      return error(res, {
-        statusCode: 403,
-        message: 'Access denied: you can only access your own data',
-      });
-    }
-  }
-
-  next();
-}
+// Remediation Pass 1 / SEC-005 (Docs/reports/remediation-pass-1-report.md):
+// an `ownershipScopingMiddleware` function used to live here — a
+// route-level middleware that trusted `req.params.ownerId`/
+// `req.body.owner_id` (client-supplied) directly, rather than a value
+// read back from the database. It was confirmed dead code (re-grepped
+// project-wide before removal, same as the audit's own check: zero
+// references anywhere outside this file) and was never the pattern
+// actually used by any live route — every real ownership check in this
+// codebase instead fetches the resource first, then calls
+// ownershipScoping(req.user.ownerId, resource.owner_id) below, which is
+// the structurally safer of the two patterns. Removed entirely rather
+// than left in place/commented-out, so it can't be reached for by a
+// future route without noticing it was the weaker option.
 
 module.exports = {
   verifyToken,
   requireRole,
   requireOwner,
   ownershipScoping,
-  ownershipScopingMiddleware,
 };

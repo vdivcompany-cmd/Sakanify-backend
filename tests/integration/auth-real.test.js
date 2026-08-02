@@ -15,6 +15,7 @@ const authRoutes = require('../../src/modules/auth/auth.routes');
 const User = require('../../src/modules/auth/auth.model');
 const OTP = require('../../src/modules/auth/otp.model');
 const authService = require('../../src/modules/auth/auth.service');
+const otpService = require('../../src/modules/auth/otp.service');
 const { ROLES } = require('../../src/config/constants.config');
 
 const env = require('../../src/config/env.config');
@@ -92,7 +93,9 @@ describe('🔐 Auth Integration Tests — Real Database', () => {
 
       expect(otpRes.status).toBe(200);
       expect(otpRes.body.success).toBe(true);
-      const otpCode = otpRes.body.data._dev_code; // Development mode code
+      // SEC-001 fix: the OTP code is no longer part of the response body —
+      // read it back from the store via the test-only accessor instead.
+      const otpCode = await otpService.__getLastOtpForPhone(phone);
       expect(otpCode).toBeDefined();
       console.log(`  📱 OTP generated for ${phone}: ${otpCode}`);
 
@@ -328,7 +331,7 @@ describe('🔐 Auth Integration Tests — Real Database', () => {
         .post('/api/auth/request-otp')
         .send({ phone });
 
-      const otpCode = otpRes.body.data._dev_code;
+      const otpCode = await otpService.__getLastOtpForPhone(phone);
 
       const loginRes = await request(app)
         .post('/api/auth/verify-otp')
@@ -360,7 +363,7 @@ describe('🔐 Auth Integration Tests — Real Database', () => {
         .post('/api/auth/request-otp')
         .send({ phone });
 
-      const otpCode = otpRes.body.data._dev_code;
+      const otpCode = await otpService.__getLastOtpForPhone(phone);
 
       const loginRes = await request(app)
         .post('/api/auth/verify-otp')

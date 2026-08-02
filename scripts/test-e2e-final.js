@@ -17,6 +17,7 @@ const app = require('../src/app.entry');
 const User = require('../src/modules/auth/auth.model');
 const OTP = require('../src/modules/auth/otp.model');
 const authService = require('../src/modules/auth/auth.service');
+const otpService = require('../src/modules/auth/otp.service');
 const { ROLES } = require('../src/config/constants.config');
 
 let mongoServer;
@@ -222,7 +223,9 @@ async function runE2ETests() {
       throw new Error(`OTP request failed: ${res.status}`);
     }
 
-    const otpCode = res.body.data._dev_code;
+    // SEC-001 fix: the OTP code is no longer part of the response body —
+    // read it back from the store via the test-only accessor instead.
+    const otpCode = await otpService.__getLastOtpForPhone(phone2);
     testPass('✅ OTP requested successfully (200)',
       `Code: ${otpCode}`);
 
@@ -264,7 +267,7 @@ async function runE2ETests() {
       .post('/api/auth/request-otp')
       .send({ phone: phone3 });
 
-    const otpCode2 = res.body.data._dev_code;
+    const otpCode2 = await otpService.__getLastOtpForPhone(phone3);
 
     res = await request(app)
       .post('/api/auth/verify-otp')

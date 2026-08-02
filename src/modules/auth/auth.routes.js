@@ -35,6 +35,7 @@ const router = express.Router();
 const otpStore = new MemoryStore();
 const loginStore = new MemoryStore();
 const passwordResetStore = new MemoryStore();
+const refreshTokenStore = new MemoryStore();
 
 // OTP requests: max 3 per 5 minutes to prevent spam
 const otpLimiter = rateLimit({
@@ -64,6 +65,24 @@ const passwordResetLimiter = rateLimit({
   standardHeaders: false,
   legacyHeaders: false,
   store: passwordResetStore,
+});
+
+// Remediation Pass 1 / SEC-006 (Docs/reports/remediation-pass-1-report.md):
+// refresh-token was the one auth endpoint with no rate limiter at all,
+// inconsistent with CLAUDE.md 3.7's "rate-limit all authentication
+// endpoints." Low practical exploitability (refresh tokens are unguessable
+// 256-bit-class JWTs, not a brute-forceable secret), so this is a generous
+// defense-in-depth limit, not a tight anti-brute-force one — legitimate
+// clients refresh their access token roughly every 15-30 minutes
+// (env.jwt.accessExpiry), so even a client refreshing unusually often
+// stays well under this well before it'd ever affect real usage.
+const refreshTokenLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30,
+  message: 'Too many token refresh requests. Please try again later.',
+  standardHeaders: false,
+  legacyHeaders: false,
+  store: refreshTokenStore,
 });
 
 // --- Public endpoints (no authentication required) ---
@@ -100,7 +119,7 @@ router.post('/login-owner', loginLimiter, authController.loginOwner);
  * Refresh access token using refresh token
  * Body: { refreshToken: "..." }
  */
-router.post('/refresh-token', authController.refreshToken);
+router.post('/refresh-token', refreshTokenLimiter, authController.refreshToken);
 
 /**
  * POST /api/auth/password-reset/initiate
@@ -158,6 +177,7 @@ router.rateLimitStores = {
   otp: otpStore,
   login: loginStore,
   passwordReset: passwordResetStore,
+  refreshToken: refreshTokenStore,
 };
 
 module.exports = router;

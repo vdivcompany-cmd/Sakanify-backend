@@ -72,8 +72,10 @@ async function runTests() {
       const phone = '+201234567890';
 
       // Request OTP
-      const otpData = await otpService.requestOtp(phone);
-      const otpCode = otpData._dev_code;
+      await otpService.requestOtp(phone);
+      // SEC-001 fix: requestOtp() no longer returns the code — read it
+      // back via the test-only accessor instead.
+      const otpCode = await otpService.__getLastOtpForPhone(phone);
 
       testPass('OTP generated', `Code: ${otpCode}`);
 
@@ -245,8 +247,9 @@ async function runTests() {
 
     try {
       const phone = '+205555555555';
-      const otpData = await otpService.requestOtp(phone);
-      const loginResult = await authService.loginStudent(phone, otpData._dev_code);
+      await otpService.requestOtp(phone);
+      const otpCode = await otpService.__getLastOtpForPhone(phone);
+      const loginResult = await authService.loginStudent(phone, otpCode);
       const userId = loginResult.userId;
 
       const logoutResult = await authService.logout(userId);

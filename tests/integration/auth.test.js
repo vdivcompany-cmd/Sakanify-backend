@@ -18,6 +18,7 @@ const app = require('../../src/app.entry');
 const authRoutes = require('../../src/modules/auth/auth.routes');
 const User = require('../../src/modules/auth/auth.model');
 const OTP = require('../../src/modules/auth/otp.model');
+const otpService = require('../../src/modules/auth/otp.service');
 const { ROLES } = require('../../src/config/constants.config');
 
 let mongoServer;
@@ -102,7 +103,27 @@ describe('Auth Module - Integration Tests', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.phone).toBe(phone);
-      expect(res.body.data._dev_code).toBeDefined(); // Development mode OTP code
+    });
+
+    // SEC-001 regression test (Remediation Pass 1): the OTP code must never
+    // appear anywhere in this endpoint's response body, in any environment.
+    // Asserts against the actual secret value (read back via the test-only
+    // otpService.__getLastOtpForPhone() accessor, never from the HTTP
+    // response), not just the absence of a specific field name — so this
+    // still catches the code leaking back out under some other field name.
+    it('SEC-001: should never include the OTP code anywhere in the request-otp response body', async () => {
+      const phone = uniquePhone();
+      const res = await request(app)
+        .post('/api/auth/request-otp')
+        .send({ phone });
+
+      expect(res.status).toBe(200);
+
+      const actualCode = await otpService.__getLastOtpForPhone(phone);
+
+      expect(res.body.data).not.toHaveProperty('_dev_code');
+      expect(res.body.data).not.toHaveProperty('code');
+      expect(JSON.stringify(res.body)).not.toContain(actualCode);
     });
 
     it('should verify OTP and log in student', async () => {
@@ -113,7 +134,7 @@ describe('Auth Module - Integration Tests', () => {
         .post('/api/auth/request-otp')
         .send({ phone });
 
-      const otpCode = otpRes.body.data._dev_code;
+      const otpCode = await otpService.__getLastOtpForPhone(phone);
 
       // Verify OTP and login
       const loginRes = await request(app)
@@ -260,7 +281,7 @@ describe('Auth Module - Integration Tests', () => {
         .post('/api/auth/request-otp')
         .send({ phone });
 
-      const otpCode = otpRes.body.data._dev_code;
+      const otpCode = await otpService.__getLastOtpForPhone(phone);
 
       const loginRes = await request(app)
         .post('/api/auth/verify-otp')
@@ -356,7 +377,7 @@ describe('Auth Module - Integration Tests', () => {
         .post('/api/auth/request-otp')
         .send({ phone });
 
-      const otpCode = otpRes.body.data._dev_code;
+      const otpCode = await otpService.__getLastOtpForPhone(phone);
 
       const loginRes = await request(app)
         .post('/api/auth/verify-otp')
@@ -401,7 +422,7 @@ describe('Auth Module - Integration Tests', () => {
         .post('/api/auth/request-otp')
         .send({ phone });
 
-      const otpCode = otpRes.body.data._dev_code;
+      const otpCode = await otpService.__getLastOtpForPhone(phone);
 
       const loginRes = await request(app)
         .post('/api/auth/verify-otp')
