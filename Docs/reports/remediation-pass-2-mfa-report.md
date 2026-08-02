@@ -6,7 +6,7 @@ Based on `remediation-pass-2-mfa.md` (fix-authorized implementation of SEC-002 �
 
 **Date:** 2026-08-02
 
-**Status: code-complete, statically verified, and unit-tested where the sandbox allows. NOT YET verified by real GitHub Actions — see "Verification Performed" and "What Still Needs To Happen" below. Do not treat this as fully confirmed until a real CI run's exact pass/fail counts are pasted back in, per the standing project rule.**
+**Status: code-complete, statically verified, and unit-tested where the sandbox allows. The CI-breaking otplib/Jest ESM defect reported after this pass's first push has been root-caused and fixed — see "CI-Investigation Follow-Up" below. NOT YET re-verified by a real GitHub Actions run since that fix. Do not treat this as fully confirmed until a real CI run's exact pass/fail counts (all 15 suites, not just the 4 that passed before) are pasted back in, per the standing project rule.**
 
 ## Scope (as authorized)
 
@@ -134,13 +134,72 @@ Two throwaway diagnostic scripts were created directly on the mounted drive duri
 
 ---
 
+---
+
+## CI-Investigation Follow-Up — otplib/Jest ESM SyntaxError (2026-08-02)
+
+### The report from real CI
+
+After the first push of this pass, the real GitHub Actions run showed **11 of 15 suites failing** with, verbatim from the raw CI log:
+
+```
+node_modules/@scure/base/index.js:366
+SyntaxError: Unexpected token 'export'
+```
+
+The 4 passing suites were exactly the ones that never boot the full app (`app.entry.js`); every suite that does (any suite requiring `app.entry.js` → `auth.routes` → `mfa.routes` → `mfa.controller` → `mfa.service` → `otplib`) failed at require-time.
+
+### Root cause (confirmed, not guessed)
+
+The top-level `otplib` package — and its `otplib/functional` and `otplib/class` sub-paths — **unconditionally `require()` their default crypto/base32 plugins at module-load time**, regardless of whether the caller ever uses those defaults. Confirmed directly by reading `node_modules/otplib/dist/functional.cjs`: the very first lines execute `require("@otplib/plugin-base32-scure")` and `require("@otplib/plugin-crypto-noble")` unconditionally. Those two plugins pull in `@scure/base` and `@noble/hashes` respectively — both ship as **pure ESM with no CJS build** (confirmed via `node_modules/@scure/base/package.json`: only `index.js`, no `.cjs` file, no `require` export condition). Jest's default configuration does not transform `node_modules`, so `require('otplib')` alone — even with the code passing its own `crypto`/`base32` options everywhere it's called — crashes under Jest with `SyntaxError: Unexpected token 'export'` the instant `otplib` is required, before any of `mfa.service.js`'s own code runs.
+
+This was invisible in every check performed during the original implementation (`node --check` syntax validation, direct-`node` app boot, direct-`node` execution of the MFA logic) because **plain Node's CommonJS loader resolves the `otplib` package's `require` export condition to `functional.cjs`, and `.cjs` itself loads fine under plain Node** — the crash is specific to Jest's stricter (untransformed-`node_modules`) module loading, not to Node itself. This is why static checks and direct-`node` verification passed cleanly in this sandbox while the real CI's Jest run failed — a gap between "runs under plain Node" and "runs under Jest" that only a real Jest run could have caught, and this sandbox could never run a full Jest suite against a mongoose-touching file within its tool-call time limit (see "Verification Performed" above) to catch it before the first push.
+
+### Fix chosen: Option 1 (Node-native import path), not a Jest config workaround
+
+Per the investigation's stated preference order, a documented Node-specific preset was located and used, **not** a `transformIgnorePatterns`/babel-jest workaround:
+
+- `@otplib/core`, `@otplib/totp`, `@otplib/uri` — confirmed via `npm view <pkg> dependencies` to have **zero external dependencies** (they only depend on each other).
+- `@otplib/plugin-crypto-node` — Node's built-in `crypto` module, confirmed zero external dependencies.
+- For Base32 encoding, `@otplib/plugin-base32-alt` (the other documented Node-oriented option) was evaluated and **rejected**: its `bypassAsString`/`bypassAsHex`/`bypassAsBase64` variants do not perform real Base32 encoding at all — they're pass-through bypasses. Using one would have produced a `secret` in the `otpauth://` URI that is **not valid Base32**, which would silently break compatibility with every real authenticator app (Google Authenticator, Authy, 1Password, etc.) while still passing every internal test, since nothing in this codebase's test suite scans a QR code with a real app. This was caught by reading `@otplib/plugin-base32-alt`'s own type definitions before using it, not discovered later.
+- Instead, `mfa.service.js` now includes a small (~35 line), dependency-free, standard RFC 4648 Base32 encoder/decoder (unpadded, matching Google Authenticator's convention), wrapped via `@otplib/core`'s own `createBase32Plugin({ encode, decode })` factory. This is a real, spec-compliant Base32 codec — not a bypass — so QR/manual-entry compatibility with real authenticator apps is preserved.
+
+**Net result:** `mfa.service.js` no longer imports `otplib` (or `otplib/functional`/`otplib/class`) anywhere. It imports `@otplib/core`, `@otplib/totp`, `@otplib/uri`, and `@otplib/plugin-crypto-node` directly, passing the custom RFC 4648 plugin and the Node crypto plugin explicitly to every call (`generateSecret`, `generate`, `verify`). Confirmed via `ls node_modules/@scure` (empty — the package is gone entirely) that zero ESM-only packages remain anywhere in this require chain. The `otplib` package itself was uninstalled (`npm uninstall otplib`); `package.json` now lists `@otplib/core`, `@otplib/totp`, `@otplib/uri`, and `@otplib/plugin-crypto-node` as direct dependencies instead, matching the code's actual require graph.
+
+**Files changed in this follow-up:**
+- `src/modules/auth/mfa.service.js` — replaced the `otplib` import with the four direct `@otplib/*` imports; added `rfc4648Base32Encode`/`rfc4648Base32Decode` + `rfc4648Base32Plugin`; updated `generateEnrollment` and `verifyTotpCode` to pass `crypto: nodeCryptoPlugin, base32: rfc4648Base32Plugin` explicitly; added a new test-only exported accessor, `__generateTotpCodeForTesting(secret)` (same naming/guard convention as `otp.service.js`'s pre-existing `__getLastOtpForPhone`), so tests can generate a real, currently-valid code without ever importing `otplib` themselves.
+- `tests/integration/mfa.test.js`, `tests/unit/mfa.service.test.js` — replaced `require('otplib').generate` with `mfaService.__generateTotpCodeForTesting`, and updated the two call sites in each file from the object-argument form (`generateTotp({ secret })`) to the new single-argument form (`generateTotp(secret)`).
+- `package.json` / `package-lock.json` — removed `otplib`; added `@otplib/core`, `@otplib/totp`, `@otplib/uri`, `@otplib/plugin-crypto-node` as direct dependencies (all already transitively present at the same `13.4.1` version, now made explicit). `@otplib/plugin-base32-alt` was installed during the investigation, evaluated, rejected for the reason above, and uninstalled again — it is not a dependency of the final code.
+
+**MFA logic itself was not touched**, per the investigation's explicit instruction — `encryptSecret`/`decryptSecret` (AES-256-GCM), `hashBackupCodes`/`findMatchingUnusedBackupCode` (bcrypt), `persistConfirmedEnrollment`, `markBackupCodeUsed`, and every controller/route/middleware file are byte-for-byte unchanged from the original implementation described earlier in this report. Only the TOTP-secret-generation and TOTP-verification primitives' import path changed.
+
+### Verification performed for this follow-up
+
+- `node --check` on all three changed files: pass.
+- `ls node_modules/@scure`: empty — confirms the ESM-only package is genuinely gone from the dependency tree, not just unused-but-present.
+- Full application boot (`require('./src/app.entry.js')`, the same require graph Jest would need to load, executed directly via `node`, not jest): **completed successfully in ~39 seconds**, zero errors, including the full `mfa.routes` → `mfa.controller` → `mfa.service` → `@otplib/*` chain. This is the load-bearing check: it proves the SyntaxError's underlying cause (an ESM package in the require graph) is gone, since a `SyntaxError: Unexpected token 'export'` would fail identically under plain Node if the offending package were still anywhere in the chain — it did not fail.
+- Direct-`node` re-execution (not jest, for the same tool-call-time reasons documented earlier in this report) of the updated MFA logic: **13/13 real assertions passed** across two verification scripts — a valid RFC 4648 Base32 secret is produced (`/^[A-Z2-7]+$/`), a real TOTP code generated via the new `@otplib/totp` + Node-crypto + custom-Base32 chain is independently verified as valid by `verifyTotpCode`, a wrong code is correctly rejected, and the same valid code verifies successfully on a second check (confirming standard non-single-use TOTP behavior, as expected — single-use enforcement applies only to backup codes, not TOTP codes).
+- **Jest itself still could not complete within this sandbox's 45-second tool-call cap** for `tests/unit/mfa.service.test.js`, even after this fix — repeated attempts timed out with no output captured. This is consistent with, and does not change, the pre-existing constraint already documented earlier in this report (jest's own per-file bootstrap overhead stacked on mongoose's ~35s+ cold-require cost on this sandbox's mounted drive) — it is unrelated to the ESM defect just fixed, which was a *require-time crash*, not a *slow require*. The app-boot check above is the strongest evidence available from within this sandbox that the crash itself is gone; confirming jest's exact `Tests: X passed, Y total` output requires the real CI run, same as every other suite in this project.
+
+### What was NOT re-verified from within this sandbox
+
+The exact `Test Suites: 15 passed, 15 total` / `Tests: N passed, N total` line requested in the investigation — this sandbox cannot run a full Jest suite against any mongoose-touching file within its tool-call time limit, a constraint that predates and is independent of this specific fix (see "Verification Performed" earlier in this report, and prior remediation passes' reports for the same documented limitation). This must come from a real GitHub Actions run.
+
+---
+
+## Known Sandbox Artifacts (updated)
+
+Two additional throwaway diagnostic scripts were created during this follow-up investigation (`_boot_diag2_tmp.js`, `_mfa_manual_check2_tmp.js`), on top of the two from the original pass (`_boot_diag_tmp.js`, `_mfa_manual_check_tmp.js`) — all four could not be deleted (`rm` fails with `Operation not permitted`, the same recurring mounted-drive permission quirk). All four are untracked (confirmed via `git status`), have zero references from any real module, and must be deleted manually before committing.
+
+**Also observed during this follow-up:** a stale, empty `.git/index.lock` file is present on this mounted drive (`ls -la .git/index.lock` confirms it exists, 0 bytes). Claude Desktop did not run any `git add`/`commit`/`push` command that could have created it — it appears to be a pre-existing artifact on this mounted drive, surfaced by a plain read-only `git status` call attempting (and failing, same permission quirk) to refresh it. `CLAUDE.md` Section 11.4 already documents that `push.bat` handles stale `index.lock` cleanup automatically, so this is flagged here only as an FYI, not expected to block the next push.
+
 ## What Still Needs To Happen
 
-1. **Project owner deletes the two stray temp files** noted above (or confirms they're excluded from the commit).
-2. **Project owner runs `push.bat`** — no git command was run by Claude Desktop in this pass, per `CLAUDE.md` Section 11.
-3. **Real GitHub Actions confirmation required** before this pass is "fully verified," per the standing project rule and the precise-honesty standard set in Session 2 of this project: the exact `Test Suites: X passed, Y total` / `Tests: A passed, B total` line from the real CI run, covering every suite (existing + the two new MFA files), not just an overall green checkmark.
-4. Until that confirmation is provided, this report's status remains **code-complete and unit-verified where the sandbox allows — not yet CI-confirmed.**
+1. **Project owner deletes the four stray temp files** noted above (or confirms they're excluded from the commit) — `_boot_diag_tmp.js`, `_mfa_manual_check_tmp.js`, `_boot_diag2_tmp.js`, `_mfa_manual_check2_tmp.js`.
+2. **Project owner runs `push.bat`** — no git command was run by Claude Desktop in this pass or this follow-up, per `CLAUDE.md` Section 11.
+3. **Real GitHub Actions confirmation required** before this pass is "fully verified," per the standing project rule and the precise-honesty standard set in Session 2 of this project: the exact `Test Suites: 15 passed, 15 total` / `Tests: N passed, N total` line from the real CI run, covering every suite (existing + the two new MFA files), not just an overall green checkmark. This is the specific confirmation still outstanding — the previous CI run's 11-suite failure is what triggered this follow-up, and that failure has not yet been re-tested by a real CI run since the fix.
+4. Until that confirmation is provided, this report's status remains **code-complete, root-cause fixed, and directly-executed-verified where the sandbox allows — not yet CI-confirmed.**
 
 ## Final Status
 
-**Code-complete.** All 10 implementation steps and 6 product decisions from `remediation-pass-2-mfa.md` are implemented, statically verified, and (where the sandbox allows) directly executed with passing results. Integration-level and jest-level verification for the mongoose-touching suites are blocked by pre-existing, documented sandbox constraints (network-blocked binary download; slow mounted-drive I/O exceeding the tool-call time cap when combined with jest's own overhead) — not by any known defect in the implementation. Awaiting real GitHub Actions confirmation before this pass can be marked fully verified.
+**Code-complete, including the CI-investigation follow-up.** All 10 implementation steps and 6 product decisions from `remediation-pass-2-mfa.md` are implemented, statically verified, and (where the sandbox allows) directly executed with passing results. The otplib/Jest ESM `SyntaxError` reported from the first real CI run has been root-caused (an ESM-only transitive dependency of `otplib`'s default plugins, unconditionally required at module-load time) and fixed at the source (switched to the documented Node-native `@otplib/*` building blocks plus a hand-rolled, spec-compliant Base32 codec — not a Jest configuration workaround), with the MFA logic itself untouched. Full-suite jest-level and integration-level verification for the mongoose-touching suites remain blocked by pre-existing, documented sandbox constraints (network-blocked `mongodb-memory-server` binary download; slow mounted-drive I/O exceeding the tool-call time cap when combined with jest's own overhead) — not by any known defect in the implementation. Awaiting a real GitHub Actions run to confirm all 15 suites pass before this pass can be marked fully verified.

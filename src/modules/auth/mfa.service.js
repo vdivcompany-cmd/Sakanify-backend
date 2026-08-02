@@ -23,7 +23,44 @@
 
 const crypto = require('crypto');
 const bcryptjs = require('bcryptjs');
-const { generateSecret, generateURI, verify: verifyOtp } = require('otplib');
+
+// Remediation Pass 2 follow-up (test-environment fix, CI investigation
+// 2026-08-02): the top-level `otplib` package (and its `otplib/functional`
+// and `otplib/class` entry points) unconditionally `require()`s its DEFAULT
+// crypto/base32 plugins at module-load time — `@otplib/plugin-crypto-noble`
+// (-> `@noble/hashes`) and `@otplib/plugin-base32-scure` (-> `@scure/base`)
+// — even when the caller only ever intends to pass its own plugins. Both
+// `@noble/hashes` and `@scure/base` ship as pure ESM with no CJS build, so
+// simply requiring `otplib` at all crashes under Jest's default (CJS-only,
+// untransformed node_modules) config with `SyntaxError: Unexpected token
+// 'export'` — this broke every test suite that boots the full app (any
+// suite requiring app.entry.js -> auth.routes -> mfa.routes ->
+// mfa.controller -> mfa.service -> otplib), confirmed from the real CI log.
+//
+// Fix (root cause, not a Jest workaround): bypass the `otplib` aggregator
+// package entirely and import its underlying building blocks directly —
+// `@otplib/core`, `@otplib/totp`, `@otplib/uri` are all zero-dependency
+// (verified via `npm view <pkg> dependencies` before making this change),
+// and `@otplib/plugin-crypto-node` (Node's built-in `crypto` module, no
+// external deps either) replaces the noble crypto plugin. The one default
+// this project actually needs to replace ourselves is the base32 plugin:
+// `@otplib/plugin-base32-alt`'s bundled alternatives (`bypassAsString`/
+// `bypassAsHex`/`bypassAsBase64`) do NOT perform real Base32 encoding, so
+// they were rejected — a real authenticator app (Google Authenticator,
+// Authy, etc.) requires the `secret` embedded in the `otpauth://` URI to be
+// valid RFC 4648 Base32, and a "bypass" plugin would silently break that
+// compatibility in production while still passing every internal test.
+// Instead, `rfc4648Base32Encode`/`rfc4648Base32Decode` below is a small,
+// dependency-free, standard Base32 (RFC 4648, unpadded — matching Google
+// Authenticator's convention) codec, wrapped via `@otplib/core`'s own
+// `createBase32Plugin({ encode, decode })` factory. Net result: zero ESM
+// dependencies anywhere in this require chain, and a real, authenticator-
+// app-compatible Base32 secret — a stricter fix than either option in the
+// original investigation request, not just a Jest config workaround.
+const { generateSecret: generateOtpSecret, createBase32Plugin } = require('@otplib/core');
+const { generate: generateTotpCodeRaw, verify: verifyTotpCodeRaw } = require('@otplib/totp');
+const { generateTOTP: generateTotpUri } = require('@otplib/uri');
+const { crypto: nodeCryptoPlugin } = require('@otplib/plugin-crypto-node');
 
 const User = require('./auth.model');
 const env = require('../../config/env.config');
@@ -34,6 +71,63 @@ const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH_BYTES = 12; // 96-bit IV, the standard/recommended size for GCM
 const AUTH_TAG_LENGTH_BYTES = 16;
 const ISSUER = 'Sakanify';
+
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+/**
+ * Standard RFC 4648 Base32 encoder, unpadded (no trailing `=`) — the
+ * convention Google Authenticator and every other TOTP app expects for the
+ * `secret` parameter of an otpauth:// URI. See this file's header comment
+ * on why this is hand-rolled rather than pulled from `@scure/base`.
+ */
+function rfc4648Base32Encode(bytes) {
+  let bits = 0;
+  let value = 0;
+  let output = '';
+  for (let i = 0; i < bytes.length; i += 1) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) {
+      output += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) {
+    output += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  }
+  return output;
+}
+
+/**
+ * Reverse of rfc4648Base32Encode. Accepts (and ignores case on) an
+ * optionally-padded input, since some authenticator apps/clients may
+ * round-trip a padded value even though this codec never emits one.
+ */
+function rfc4648Base32Decode(str) {
+  const cleaned = String(str).toUpperCase().replace(/=+$/, '');
+  let bits = 0;
+  let value = 0;
+  const output = [];
+  for (let i = 0; i < cleaned.length; i += 1) {
+    const idx = BASE32_ALPHABET.indexOf(cleaned[i]);
+    if (idx === -1) {
+      throw new Error(`Invalid Base32 character: ${cleaned[i]}`);
+    }
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      output.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return new Uint8Array(output);
+}
+
+const rfc4648Base32Plugin = createBase32Plugin({
+  name: 'rfc4648-node',
+  encode: rfc4648Base32Encode,
+  decode: rfc4648Base32Decode,
+});
 
 /**
  * The 32-byte AES-256-GCM key, decoded once from the hex-encoded
@@ -118,8 +212,8 @@ async function hashBackupCodes(plainCodes) {
  * real code from the secret.
  */
 async function generateEnrollment(email) {
-  const secret = generateSecret();
-  const otpauthUri = generateURI({ issuer: ISSUER, label: email, secret });
+  const secret = generateOtpSecret({ crypto: nodeCryptoPlugin, base32: rfc4648Base32Plugin });
+  const otpauthUri = generateTotpUri({ issuer: ISSUER, label: email, secret });
   const backupCodesPlain = generateBackupCodes();
   const backupCodeHashes = await hashBackupCodes(backupCodesPlain);
 
@@ -132,18 +226,20 @@ async function generateEnrollment(email) {
  * epochTolerance is clock-drift tolerance between this server and the
  * admin's authenticator app (env.mfa.totpWindowSeconds, currently 30s —
  * roughly one time-step in either direction) — a UX/reliability concern,
- * not a security control. otplib's `verify()` throws on a malformed token
- * (e.g. not exactly 6 digits) rather than returning `{ valid: false }`, so
- * that's caught here and treated as "not valid" rather than surfacing as
- * an unhandled rejection / 500 to the caller.
+ * not a security control. @otplib/totp's `verify()` throws on a malformed
+ * token (e.g. not exactly 6 digits) rather than returning
+ * `{ valid: false }`, so that's caught here and treated as "not valid"
+ * rather than surfacing as an unhandled rejection / 500 to the caller.
  */
 async function verifyTotpCode(secret, token) {
   if (!token || typeof token !== 'string') return false;
 
   try {
-    const result = await verifyOtp({
+    const result = await verifyTotpCodeRaw({
       secret,
       token,
+      crypto: nodeCryptoPlugin,
+      base32: rfc4648Base32Plugin,
       epochTolerance: env.mfa.totpWindowSeconds,
     });
     return Boolean(result.valid);
@@ -233,10 +329,28 @@ async function markBackupCodeUsed(user, matchedEntry) {
   return matchedEntry;
 }
 
+/**
+ * Test-only accessor, same naming/guard convention as
+ * otp.service.__getLastOtpForPhone: generates a REAL, currently-valid TOTP
+ * code for a given (already-decrypted) secret, using the exact same
+ * crypto/base32 plugins as verifyTotpCode above. Exists so integration/unit
+ * tests can exercise the real enrollment/login flow end-to-end (a genuine
+ * code that verifyTotpCode will actually accept) without importing the
+ * `otplib` aggregator package themselves — see this file's header comment
+ * on why `otplib` itself must never be required anywhere in this codebase
+ * (its default plugins are pure ESM and crash Jest). Never called from any
+ * production code path — only from tests/integration/mfa.test.js and
+ * tests/unit/mfa.service.test.js.
+ */
+async function __generateTotpCodeForTesting(secret) {
+  return generateTotpCodeRaw({ secret, crypto: nodeCryptoPlugin, base32: rfc4648Base32Plugin });
+}
+
 module.exports = {
   encryptSecret,
   decryptSecret,
   generateEnrollment,
+  __generateTotpCodeForTesting,
   hashBackupCodes,
   verifyTotpCode,
   findMatchingUnusedBackupCode,

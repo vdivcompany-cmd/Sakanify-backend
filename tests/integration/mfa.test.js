@@ -29,7 +29,6 @@
 const request = require('supertest');
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
-const { generate: generateTotp } = require('otplib');
 const app = require('../../src/app.entry');
 
 const User = require('../../src/modules/auth/auth.model');
@@ -37,6 +36,16 @@ const Audit = require('../../src/modules/audit/audit.model');
 const authService = require('../../src/modules/auth/auth.service');
 const authRoutes = require('../../src/modules/auth/auth.routes');
 const mfaRoutes = require('../../src/modules/auth/mfa.routes');
+const mfaService = require('../../src/modules/auth/mfa.service');
+
+// CI-investigation follow-up (2026-08-02): the top-level `otplib` package
+// crashes Jest (`SyntaxError: Unexpected token 'export'` from its default
+// `@scure/base` dependency, which is pure ESM — see mfa.service.js's
+// header comment for the full root-cause and fix). Real TOTP codes for
+// these tests are generated via mfaService.__generateTotpCodeForTesting,
+// which uses the exact same Node-native, ESM-free plugin chain as
+// production — never `otplib` itself.
+const generateTotp = mfaService.__generateTotpCodeForTesting;
 const { ROLES } = require('../../src/config/constants.config');
 
 let mongoServer;
@@ -88,7 +97,7 @@ async function enrollSuperAdmin(email) {
     .set('Authorization', `Bearer ${setupToken}`);
 
   const { secret, backup_codes: backupCodes, setup_token: enrichedSetupToken } = setupRes.body.data;
-  const code = await generateTotp({ secret });
+  const code = await generateTotp(secret);
 
   const verifyRes = await request(app)
     .post('/api/auth/mfa/verify-setup')
@@ -224,7 +233,7 @@ describe('MFA — Login flow after enrollment', () => {
 
     await authRoutes.rateLimitStores.login.resetAll();
     const loginRes = await loginAndGetSetupToken(email);
-    const code = await generateTotp({ secret });
+    const code = await generateTotp(secret);
 
     const res = await request(app)
       .post('/api/auth/mfa/verify-login')

@@ -26,8 +26,14 @@ process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'unit-test-acce
 process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'unit-test-refresh-secret';
 process.env.MFA_ENCRYPTION_KEY = process.env.MFA_ENCRYPTION_KEY || '0'.repeat(64);
 
-const { generate: generateTotp } = require('otplib');
 const mfaService = require('../../src/modules/auth/mfa.service');
+
+// CI-investigation follow-up (2026-08-02): never require `otplib` itself
+// (its default plugins are pure ESM and crash Jest) — see mfa.service.js's
+// header comment for the root cause. Real codes are generated via the
+// service's own test-only accessor, which uses the same Node-native,
+// ESM-free plugin chain as production.
+const generateTotp = mfaService.__generateTotpCodeForTesting;
 
 describe('mfa.service — encryption round-trip', () => {
   it('encryptSecret then decryptSecret returns the original plaintext secret', () => {
@@ -79,14 +85,14 @@ describe('mfa.service — generateEnrollment', () => {
 describe('mfa.service — verifyTotpCode', () => {
   it('returns true for a real, freshly-generated TOTP code', async () => {
     const enrollment = await mfaService.generateEnrollment('super-admin@sakanify.com');
-    const code = await generateTotp({ secret: enrollment.secret });
+    const code = await generateTotp(enrollment.secret);
     const isValid = await mfaService.verifyTotpCode(enrollment.secret, code);
     expect(isValid).toBe(true);
   });
 
   it('returns false for an incorrect code', async () => {
     const enrollment = await mfaService.generateEnrollment('super-admin@sakanify.com');
-    const realCode = await generateTotp({ secret: enrollment.secret });
+    const realCode = await generateTotp(enrollment.secret);
     const wrongCode = realCode === '000000' ? '111111' : '000000';
     const isValid = await mfaService.verifyTotpCode(enrollment.secret, wrongCode);
     expect(isValid).toBe(false);
