@@ -32,6 +32,9 @@ const Bed = require('../../src/modules/beds/bed.model');
 const Audit = require('../../src/modules/audit/audit.model');
 const Kyc = require('../../src/modules/kyc/kyc.model');
 const Student = require('../../src/modules/students/student.model');
+// Security-hardening-pass addition (hardening-audit Category 9/F —
+// subscription bed-capacity enforcement, added to bed.controller.createBed).
+const Subscription = require('../../src/modules/subscriptions/subscription.model');
 const authService = require('../../src/modules/auth/auth.service');
 const { ROLES, BED_STATUS } = require('../../src/config/constants.config');
 
@@ -122,6 +125,7 @@ beforeEach(async () => {
   await Audit.deleteMany({});
   await Kyc.deleteMany({});
   await Student.deleteMany({});
+  await Subscription.deleteMany({});
 });
 
 describe('Buildings, Apartments, Beds & Audit — Integration Tests', () => {
@@ -421,6 +425,93 @@ describe('Buildings, Apartments, Beds & Audit — Integration Tests', () => {
 
       const bldDel = await request(app).delete(`/api/buildings/${building._id}`).set('Authorization', `Bearer ${token}`);
       expect(bldDel.status).toBe(200);
+    });
+  });
+
+  // ========== SUBSCRIPTION BED-CAPACITY ENFORCEMENT ==========
+  // Security-hardening-pass addition (hardening-audit Category 9/F). Bed
+  // creation is now hard-blocked once it would exceed the owner's
+  // subscribed capacity — this did not exist at all before this pass (see
+  // security-hardening-report.md). Project owner's explicit decision: a
+  // 403 pointing at the Phase 6 expansion-request endpoint, not a soft
+  // warning, since there's no billing engine to support "allow but
+  // overage-bill" yet.
+
+  describe('Subscription Bed-Capacity Enforcement (Category 9/F hardening fix)', () => {
+    async function provisionSubscription(ownerId, totalBedCapacity) {
+      return Subscription.create({
+        owner_id: ownerId,
+        tier_name: 'test-tier',
+        total_bed_capacity: totalBedCapacity,
+        monthly_price: 1000,
+        renewal_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      });
+    }
+
+    it('allows creating a bed that lands exactly at the subscription capacity', async () => {
+      const { token, ownerId } = await createOwner();
+      await provisionSubscription(ownerId, 2);
+      const building = await createBuildingFor(token);
+      const apartment = await createApartmentFor(token, building._id);
+
+      const first = await request(app)
+        .post(`/api/apartments/${apartment._id}/beds`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+      expect(first.status).toBe(201);
+
+      const second = await request(app)
+        .post(`/api/apartments/${apartment._id}/beds`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+      expect(second.status).toBe(201); // exactly at capacity (2/2) — must still succeed
+
+      const bedCount = await Bed.countDocuments({ owner_id: ownerId });
+      expect(bedCount).toBe(2);
+    });
+
+    it('rejects creating a bed that would exceed the subscription capacity, with a message pointing at bed expansion', async () => {
+      const { token, ownerId } = await createOwner();
+      await provisionSubscription(ownerId, 1);
+      const building = await createBuildingFor(token);
+      const apartment = await createApartmentFor(token, building._id);
+
+      const first = await request(app)
+        .post(`/api/apartments/${apartment._id}/beds`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+      expect(first.status).toBe(201); // fills the only slot (1/1)
+
+      const overLimit = await request(app)
+        .post(`/api/apartments/${apartment._id}/beds`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+
+      expect(overLimit.status).toBe(403);
+      expect(overLimit.body.message).toMatch(/capacity/i);
+      expect(overLimit.body.message).toMatch(/expansion-requests/);
+
+      const bedCount = await Bed.countDocuments({ owner_id: ownerId });
+      expect(bedCount).toBe(1); // the rejected attempt must not have created a bed
+    });
+
+    it('does not block bed creation for an owner with no subscription provisioned at all', async () => {
+      // Buildings/Apartments/Beds (Phase 3) predates Subscriptions (Phase
+      // 6) — every other test in this file relies on this exact behavior
+      // (none of them provision a subscription), so this is also the
+      // regression guard for "the capacity fix must not break Phase 3".
+      const { token, ownerId } = await createOwner();
+      const building = await createBuildingFor(token);
+      const apartment = await createApartmentFor(token, building._id);
+
+      const res = await request(app)
+        .post(`/api/apartments/${apartment._id}/beds`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+
+      expect(res.status).toBe(201);
+      const bedCount = await Bed.countDocuments({ owner_id: ownerId });
+      expect(bedCount).toBe(1);
     });
   });
 

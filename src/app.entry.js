@@ -23,9 +23,37 @@ const app = express();
 
 // --- Core middlewares ---
 app.use(helmet());
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// Security-hardening-pass addition (Aug 2026, hardening-audit Category 6):
+// `cors()` with no options reflects/allows every origin (equivalent to a
+// wildcard `*`), which is not safe for endpoints that return
+// authenticated, owner/student-scoped data. Origins are now driven by
+// env.cors.allowedOrigins (ALLOWED_ORIGINS env var), defaulting to an
+// empty allowlist — no browser origin is trusted until the real frontend's
+// domain is explicitly added. Non-browser clients (curl, mobile apps,
+// server-to-server, and the test suite's supertest requests) don't send an
+// Origin header at all, so `!origin` is allowed through here — this option
+// only ever gates browser-originated cross-origin requests, which is the
+// only thing CORS can control in the first place.
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || env.cors.allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`Origin "${origin}" is not allowed by CORS policy`));
+  },
+  credentials: true,
+}));
+
+// Security-hardening-pass addition (hardening-audit Category "Unrestricted
+// Resource Consumption" / threat-catalog Category D): explicit body-size
+// caps rather than relying on express.json()'s implicit 100kb default —
+// this project's JSON payloads (bed/building/rental/payment fields) are all
+// small; actual file uploads (KYC photos) go through multer's own
+// memory-buffered 5MB limit (file-upload.util.js), never through this
+// JSON/urlencoded parser.
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(requestLogger);
 app.use(rateLimiter);
 

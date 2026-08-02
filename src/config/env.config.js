@@ -78,6 +78,21 @@ function loadEnv() {
       windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
       max: Number(process.env.RATE_LIMIT_MAX) || 100,
     },
+    // Security-hardening-pass addition (Aug 2026, hardening-audit Category
+    // 6): CORS must default to allowing NO cross-origin browser requests
+    // rather than the wildcard `*` app.entry.js used to pass to the `cors`
+    // middleware unconfigured. ALLOWED_ORIGINS is a comma-separated list of
+    // exact origins (e.g. "https://app.sakanify.com,https://admin.sakanify.com").
+    // Empty/unset means "no browser origin is allowed" — safe by default,
+    // matching CLAUDE.md Section 3.11 (least privilege by default). The
+    // real frontend's domain(s) must be added here once they exist; this is
+    // also restated as a pre-launch checklist item in the hardening report.
+    cors: {
+      allowedOrigins: (process.env.ALLOWED_ORIGINS || '')
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean),
+    },
   };
 }
 

@@ -41,6 +41,7 @@ const os = require('os');
 const crypto = require('crypto');
 
 const storageConfig = require('../../config/storage.config');
+const { stripMetadata } = require('./metadata-strip.util');
 
 // --- Real, content-sniffed magic bytes for the 3 allowed image types ---
 // (matches ALLOWED_MIME_TYPES in file-upload.util.js). Never trust the
@@ -104,6 +105,15 @@ async function storeFile(buffer, metadata = {}) {
   const folder = metadata.folder || 'misc';
   const reference = `${folder}/${crypto.randomUUID()}.${ext}`;
 
+  // Security-hardening-pass addition (threat-catalog Category L): strip
+  // EXIF/embedded metadata (GPS, device make/model, free-text comments)
+  // before the bytes are ever written to storage. Runs after
+  // sniffContentType() so it strips based on the real, sniffed format —
+  // never the client-declared one — and before either the mock or the
+  // real-provider write path, so every storage backend gets the same
+  // metadata-free bytes with no per-provider special-casing.
+  const sanitizedBuffer = stripMetadata(buffer, mime);
+
   const client = storageConfig.getClient();
 
   if (client) {
@@ -120,7 +130,7 @@ async function storeFile(buffer, metadata = {}) {
   // --- Mock adapter: local temp-dir write ---
   ensureMockDir();
   const filePath = path.join(MOCK_STORAGE_DIR, reference.replace(/\//g, '__'));
-  await fs.promises.writeFile(filePath, buffer);
+  await fs.promises.writeFile(filePath, sanitizedBuffer);
 
   return {
     reference,

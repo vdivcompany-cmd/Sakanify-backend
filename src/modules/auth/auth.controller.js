@@ -8,6 +8,52 @@
 const { success, error } = require('../../shared/utils/response.util');
 const authService = require('./auth.service');
 const otpService = require('./otp.service');
+const { AppError, normalizeError } = require('../../middleware/error-handler.middleware');
+
+// Security-hardening-pass addition (hardening-audit Category 5 / CLAUDE.md
+// Section 7.3a): every catch block in this controller used to do
+// `error(res, { statusCode: <hardcoded 400/401>, message: err.message })`
+// directly — never classifying the error and never redacting an
+// unexpected/internal error's message in production. Routed through
+// normalizeError() now, same pattern already used by every other
+// controller in this codebase (payment/rental/request/admin/etc) — see
+// error-handler.middleware.js's normalizeError doc comment for why the
+// prod-message redaction has to live there rather than only in the
+// (effectively unreachable, since nothing here calls next(err))
+// central errorHandler.
+function handleControllerError(res, err, context, defaultStatusCode = 400) {
+  if (!(err instanceof AppError)) {
+    console.error(`[auth.controller:${context}]`, err);
+  }
+
+  // auth.service.js/otp.service.js throw plain `Error` objects with
+  // deliberately client-safe messages (their own established convention —
+  // e.g. "Invalid or expired OTP", "Invalid email or password") rather
+  // than AppError instances or statusCode-tagged errors, so
+  // normalizeError()'s fallback branch would misclassify every one of them
+  // as an unexpected 500 and (correctly, but wrongly here) redact the
+  // message in production. Recognized/classified error shapes (AppError,
+  // Mongoose errors, JWT errors, anything with an explicit .statusCode)
+  // still go through normalizeError() for correct status mapping and, for
+  // a genuine 5xx, production redaction; anything else keeps this
+  // controller's original per-endpoint default status code with the
+  // service's own message — unchanged behavior from before this
+  // hardening pass, now with the missing console.error logging added.
+  const isRecognizedShape = err instanceof AppError
+    || err.statusCode
+    || err.name === 'ValidationError'
+    || err.name === 'CastError'
+    || err.code === 11000
+    || err.name === 'JsonWebTokenError'
+    || err.name === 'TokenExpiredError';
+
+  if (isRecognizedShape) {
+    const { statusCode, message, errors } = normalizeError(err);
+    return error(res, { statusCode, message, errors });
+  }
+
+  return error(res, { statusCode: defaultStatusCode, message: err.message || 'Request failed' });
+}
 
 /**
  * POST /api/auth/register-student
@@ -31,10 +77,7 @@ async function registerStudent(req, res) {
       data: result,
     });
   } catch (err) {
-    return error(res, {
-      statusCode: 400,
-      message: err.message,
-    });
+    return handleControllerError(res, err, 'registerStudent', 400);
   }
 }
 
@@ -60,10 +103,7 @@ async function requestOtp(req, res) {
       data: result,
     });
   } catch (err) {
-    return error(res, {
-      statusCode: 400,
-      message: err.message,
-    });
+    return handleControllerError(res, err, 'requestOtp', 400);
   }
 }
 
@@ -89,10 +129,7 @@ async function verifyOtp(req, res) {
       data: result,
     });
   } catch (err) {
-    return error(res, {
-      statusCode: 401,
-      message: err.message,
-    });
+    return handleControllerError(res, err, 'verifyOtp', 401);
   }
 }
 
@@ -118,10 +155,7 @@ async function loginOwner(req, res) {
       data: result,
     });
   } catch (err) {
-    return error(res, {
-      statusCode: 401,
-      message: err.message,
-    });
+    return handleControllerError(res, err, 'loginOwner', 401);
   }
 }
 
@@ -147,10 +181,7 @@ async function refreshToken(req, res) {
       data: result,
     });
   } catch (err) {
-    return error(res, {
-      statusCode: 401,
-      message: err.message,
-    });
+    return handleControllerError(res, err, 'refreshToken', 401);
   }
 }
 
@@ -169,10 +200,7 @@ async function logout(req, res) {
       data: result,
     });
   } catch (err) {
-    return error(res, {
-      statusCode: 400,
-      message: err.message,
-    });
+    return handleControllerError(res, err, 'logout', 400);
   }
 }
 
@@ -198,10 +226,7 @@ async function initiatePasswordReset(req, res) {
       data: result,
     });
   } catch (err) {
-    return error(res, {
-      statusCode: 400,
-      message: err.message,
-    });
+    return handleControllerError(res, err, 'initiatePasswordReset', 400);
   }
 }
 
@@ -228,10 +253,7 @@ async function completePasswordReset(req, res) {
       data: result,
     });
   } catch (err) {
-    return error(res, {
-      statusCode: 400,
-      message: err.message,
-    });
+    return handleControllerError(res, err, 'completePasswordReset', 400);
   }
 }
 
@@ -257,10 +279,7 @@ async function inviteOwner(req, res) {
       data: result,
     });
   } catch (err) {
-    return error(res, {
-      statusCode: 400,
-      message: err.message,
-    });
+    return handleControllerError(res, err, 'inviteOwner', 400);
   }
 }
 

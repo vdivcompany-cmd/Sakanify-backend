@@ -16,6 +16,19 @@ const { success, error } = require('../../shared/utils/response.util');
 const kycService = require('./kyc.service');
 const studentRepository = require('../students/student.repository');
 const { VERIFICATION_STATUS } = require('./kyc.model');
+const { AppError, normalizeError } = require('../../middleware/error-handler.middleware');
+
+// Security-hardening-pass addition (hardening-audit Category 5 / CLAUDE.md
+// Section 7.3a) — same reasoning as the other retrofitted controllers in
+// this pass; kyc.service only ever throws AppError, so this is a
+// straightforward swap with no behavior change for the classified case.
+function handleControllerError(res, err, context) {
+  if (!(err instanceof AppError)) {
+    console.error(`[kyc.controller:${context}]`, err);
+  }
+  const { statusCode, message, errors } = normalizeError(err);
+  return error(res, { statusCode, message, errors });
+}
 
 const NATIONAL_ID_PATTERN = /^\d{14}$/; // Egyptian national ID: 14 digits
 
@@ -34,7 +47,7 @@ async function getMyKyc(req, res) {
     const kyc = await kycService.getMyKyc(student._id);
     return success(res, { statusCode: 200, message: 'KYC status retrieved', data: kyc });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'getMyKyc');
   }
 }
 
@@ -73,7 +86,7 @@ async function resubmitKyc(req, res) {
 
     return success(res, { statusCode: 200, message: 'KYC resubmitted, pending review', data: kyc });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'resubmitKyc');
   }
 }
 
@@ -97,7 +110,7 @@ async function updateVerificationStatus(req, res) {
 
     return success(res, { statusCode: 200, message: 'KYC verification status updated', data: kyc });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'updateVerificationStatus');
   }
 }
 

@@ -66,6 +66,20 @@ function generateOwnerId() {
  * above, which can only invalidate everything at once). `jti` gives us
  * that hook for later, even though per-token revocation isn't wired up yet.
  */
+// Security-hardening-pass addition (Aug 2026, threat-catalog Category B —
+// "JWT algorithm confusion"): every jwt.sign/jwt.verify call in this file
+// now explicitly pins the algorithm to HS256 rather than letting
+// jsonwebtoken infer it from the token header. Signing was already
+// implicitly HS256 (a plain string secret, not a keypair), so this mostly
+// hardens verifyToken(): without an explicit `algorithms` allowlist,
+// jwt.verify() accepts whatever `alg` the presented token's header claims,
+// which is the classic algorithm-confusion class of bug. Pinning it here
+// means a token crafted with a different/weaker algorithm (or `alg: none`,
+// which jsonwebtoken already rejects by default, but this makes the
+// restriction explicit and future-proof rather than relying on that
+// default) is rejected outright.
+const JWT_ALGORITHM = 'HS256';
+
 function issueTokens(userId, role, ownerId = null) {
   const accessToken = jwt.sign(
     {
@@ -76,7 +90,7 @@ function issueTokens(userId, role, ownerId = null) {
       jti: crypto.randomUUID(),
     },
     env.jwt.accessSecret,
-    { expiresIn: env.jwt.accessExpiry },
+    { expiresIn: env.jwt.accessExpiry, algorithm: JWT_ALGORITHM },
   );
 
   const refreshToken = jwt.sign(
@@ -88,7 +102,7 @@ function issueTokens(userId, role, ownerId = null) {
       jti: crypto.randomUUID(),
     },
     env.jwt.refreshSecret,
-    { expiresIn: env.jwt.refreshExpiry },
+    { expiresIn: env.jwt.refreshExpiry, algorithm: JWT_ALGORITHM },
   );
 
   return { accessToken, refreshToken };
@@ -100,7 +114,7 @@ function issueTokens(userId, role, ownerId = null) {
 function verifyToken(token, type = 'access') {
   try {
     const secret = type === 'access' ? env.jwt.accessSecret : env.jwt.refreshSecret;
-    const decoded = jwt.verify(token, secret);
+    const decoded = jwt.verify(token, secret, { algorithms: [JWT_ALGORITHM] });
     return decoded;
   } catch (error) {
     throw new Error(`Invalid or expired ${type} token`);
@@ -276,7 +290,7 @@ async function refreshAccessToken(refreshToken) {
         jti: crypto.randomUUID(),
       },
       env.jwt.accessSecret,
-      { expiresIn: env.jwt.accessExpiry },
+      { expiresIn: env.jwt.accessExpiry, algorithm: JWT_ALGORITHM },
     );
 
     return {

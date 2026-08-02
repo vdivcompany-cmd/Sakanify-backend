@@ -10,6 +10,20 @@
 const { success, error } = require('../../shared/utils/response.util');
 const auditService = require('./audit.service');
 const { parsePagination, buildMeta } = require('../../shared/utils/pagination.util');
+const { AppError, normalizeError } = require('../../middleware/error-handler.middleware');
+
+// Security-hardening-pass addition (hardening-audit Category 5 / CLAUDE.md
+// Section 7.3a) — same reasoning as every other retrofitted controller in
+// this pass: the old `err.statusCode || 400` catch collapsed every error
+// into an unclassified, unlogged 400 and never redacted an unexpected
+// error's message in production.
+function handleControllerError(res, err, context) {
+  if (!(err instanceof AppError)) {
+    console.error(`[audit.controller:${context}]`, err);
+  }
+  const { statusCode, message, errors } = normalizeError(err);
+  return error(res, { statusCode, message, errors });
+}
 
 /**
  * GET /api/audit
@@ -35,7 +49,7 @@ async function listAuditLogs(req, res) {
       meta: buildMeta(total, page, limit),
     });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'listAuditLogs');
   }
 }
 
@@ -57,7 +71,7 @@ async function getEntityHistory(req, res) {
       data: entries,
     });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'getEntityHistory');
   }
 }
 

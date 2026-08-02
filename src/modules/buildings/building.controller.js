@@ -21,6 +21,21 @@ const { ownershipScoping } = require('../../middleware/auth.middleware');
 const { parsePagination, buildMeta } = require('../../shared/utils/pagination.util');
 const { AppError, normalizeError } = require('../../middleware/error-handler.middleware');
 
+// Security-hardening-pass addition (hardening-audit Category 5 / CLAUDE.md
+// Section 7.3a): updateUtilitiesSetting already used this pattern (a
+// Phase 6 addition); every other handler in this file predates the rule
+// and used the old `err.statusCode || 400` catch. Retrofitted here so the
+// whole file is consistent — building.service only ever throws AppError,
+// so this is a straightforward swap with no behavior change for the
+// classified case.
+function handleControllerError(res, err, context) {
+  if (!(err instanceof AppError)) {
+    console.error(`[building.controller:${context}]`, err);
+  }
+  const { statusCode, message, errors } = normalizeError(err);
+  return error(res, { statusCode, message, errors });
+}
+
 function validateBuildingFields(body, { partial = false } = {}) {
   const errors = [];
   const data = {};
@@ -71,7 +86,7 @@ async function createBuilding(req, res) {
     const building = await buildingService.createBuilding(req.user.ownerId, data);
     return success(res, { statusCode: 201, message: 'Building created', data: building });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message, errors: err.errors || null });
+    return handleControllerError(res, err, 'createBuilding');
   }
 }
 
@@ -91,7 +106,7 @@ async function listBuildings(req, res) {
       meta: buildMeta(total, page, limit),
     });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'listBuildings');
   }
 }
 
@@ -113,7 +128,7 @@ async function getBuilding(req, res) {
     const structure = await buildingService.getBuildingWithStructure(req.params.buildingId);
     return success(res, { statusCode: 200, message: 'Building retrieved', data: structure });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'getBuilding');
   }
 }
 
@@ -142,7 +157,7 @@ async function updateBuilding(req, res) {
     const updated = await buildingService.updateBuilding(req.params.buildingId, data);
     return success(res, { statusCode: 200, message: 'Building updated', data: updated });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message, errors: err.errors || null });
+    return handleControllerError(res, err, 'updateBuilding');
   }
 }
 
@@ -179,7 +194,7 @@ async function deleteBuilding(req, res) {
     await buildingService.deleteBuilding(req.params.buildingId);
     return success(res, { statusCode: 200, message: 'Building deleted', data: null });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'deleteBuilding');
   }
 }
 
@@ -200,7 +215,7 @@ async function getOccupancy(req, res) {
     const occupancy = await buildingService.getBuildingOccupancy(req.params.buildingId);
     return success(res, { statusCode: 200, message: 'Occupancy retrieved', data: occupancy });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'getOccupancy');
   }
 }
 

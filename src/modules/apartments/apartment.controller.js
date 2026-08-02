@@ -16,6 +16,18 @@ const bedService = require('../beds/bed.service');
 const rentalService = require('../rentals/rental.service');
 const { ownershipScoping } = require('../../middleware/auth.middleware');
 const { parsePagination, buildMeta } = require('../../shared/utils/pagination.util');
+const { AppError, normalizeError } = require('../../middleware/error-handler.middleware');
+
+// Security-hardening-pass addition (hardening-audit Category 5 / CLAUDE.md
+// Section 7.3a) — apartment.service only ever throws AppError, so this is
+// a straightforward swap with no behavior change for the classified case.
+function handleControllerError(res, err, context) {
+  if (!(err instanceof AppError)) {
+    console.error(`[apartment.controller:${context}]`, err);
+  }
+  const { statusCode, message, errors } = normalizeError(err);
+  return error(res, { statusCode, message, errors });
+}
 
 function validateApartmentFields(body, { partial = false } = {}) {
   const errors = [];
@@ -64,7 +76,7 @@ async function createApartment(req, res) {
     const apartment = await apartmentService.createApartment(building._id, building.owner_id, data);
     return success(res, { statusCode: 201, message: 'Apartment created', data: apartment });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message, errors: err.errors || null });
+    return handleControllerError(res, err, 'createApartment');
   }
 }
 
@@ -92,7 +104,7 @@ async function listApartments(req, res) {
       meta: buildMeta(total, page, limit),
     });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'listApartments');
   }
 }
 
@@ -117,7 +129,7 @@ async function getApartment(req, res) {
       data: { ...apartment.toObject(), beds },
     });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'getApartment');
   }
 }
 
@@ -146,7 +158,7 @@ async function updateApartment(req, res) {
     const updated = await apartmentService.updateApartment(req.params.apartmentId, data);
     return success(res, { statusCode: 200, message: 'Apartment updated', data: updated });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message, errors: err.errors || null });
+    return handleControllerError(res, err, 'updateApartment');
   }
 }
 
@@ -181,7 +193,7 @@ async function deleteApartment(req, res) {
     await apartmentService.deleteApartment(req.params.apartmentId);
     return success(res, { statusCode: 200, message: 'Apartment deleted', data: null });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'deleteApartment');
   }
 }
 

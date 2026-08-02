@@ -13,6 +13,23 @@ const studentService = require('./student.service');
 const requestService = require('../requests/request.service');
 const rentalService = require('../rentals/rental.service');
 const { registerStudentSchema, updateProfileSchema, validate } = require('./student.validation');
+const { AppError, normalizeError } = require('../../middleware/error-handler.middleware');
+
+// Security-hardening-pass addition (hardening-audit Category 5 / CLAUDE.md
+// Section 7.3a). Safe to route straight through normalizeError() here
+// (unlike auth.controller.js) — every error this module's own service/
+// validation layer throws is either an AppError or student.validation.js's
+// zod helper (a plain Error with an explicit `.statusCode` < 500 and an
+// `.errors` array), both of which normalizeError() now classifies
+// correctly and preserves the `errors` array for (see
+// error-handler.middleware.js's normalizeError doc comment).
+function handleControllerError(res, err, context) {
+  if (!(err instanceof AppError)) {
+    console.error(`[student.controller:${context}]`, err);
+  }
+  const { statusCode, message, errors } = normalizeError(err);
+  return error(res, { statusCode, message, errors });
+}
 
 const NATIONAL_ID_PATTERN = /^\d{14}$/; // Egyptian national ID: 14 digits
 
@@ -60,11 +77,7 @@ async function registerStudent(req, res) {
       },
     });
   } catch (err) {
-    return error(res, {
-      statusCode: err.statusCode || 400,
-      message: err.message,
-      errors: err.errors || null,
-    });
+    return handleControllerError(res, err, 'registerStudent');
   }
 }
 
@@ -84,7 +97,7 @@ async function getMyProfile(req, res) {
       },
     });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'getMyProfile');
   }
 }
 
@@ -102,11 +115,7 @@ async function updateMyProfile(req, res) {
       data: student,
     });
   } catch (err) {
-    return error(res, {
-      statusCode: err.statusCode || 400,
-      message: err.message,
-      errors: err.errors || null,
-    });
+    return handleControllerError(res, err, 'updateMyProfile');
   }
 }
 
@@ -155,7 +164,7 @@ async function getFullProfileForOwner(req, res) {
       },
     });
   } catch (err) {
-    return error(res, { statusCode: err.statusCode || 400, message: err.message });
+    return handleControllerError(res, err, 'getFullProfileForOwner');
   }
 }
 

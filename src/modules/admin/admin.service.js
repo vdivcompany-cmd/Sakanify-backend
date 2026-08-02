@@ -235,7 +235,12 @@ async function impersonateOwner(ownerId, adminUserId) {
       jti,
     },
     env.jwt.accessSecret,
-    { expiresIn: IMPERSONATION_EXPIRY },
+    // Security-hardening-pass addition: pin the signing algorithm
+    // explicitly — same reasoning as auth.service.js's JWT_ALGORITHM
+    // constant (threat-catalog Category B, JWT algorithm confusion). This
+    // token is verified by auth.service.verifyToken(), which now requires
+    // HS256 explicitly, so it must be signed with exactly that.
+    { expiresIn: IMPERSONATION_EXPIRY, algorithm: 'HS256' },
   );
 
   await adminRepository.createSession({
