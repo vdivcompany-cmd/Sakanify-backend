@@ -126,6 +126,28 @@ async function endImpersonation(req, res) {
 }
 
 /**
+ * POST /api/admin/super-admins/:id/reset-mfa
+ * Remediation Pass 2 / SEC-002, implementation step 8: admin-assisted MFA
+ * reset for a Super-Admin who lost their authenticator device/backup
+ * codes. Rejects self-reset and non-Super-Admin targets — see
+ * adminService.resetSuperAdminMfa's doc comment for why both guard rails
+ * are mandatory.
+ */
+async function resetSuperAdminMfa(req, res) {
+  try {
+    const { id } = req.params;
+    const result = await adminService.resetSuperAdminMfa(id, req.user.userId);
+    return success(res, {
+      statusCode: 200,
+      message: 'MFA has been reset for this account. They will be required to re-enroll on next login.',
+      data: result,
+    });
+  } catch (err) {
+    return handleControllerError(res, err, 'resetSuperAdminMfa');
+  }
+}
+
+/**
  * GET /api/admin/expansion-requests
  * Implementation step 5.
  */
@@ -214,6 +236,7 @@ module.exports = {
   reactivateOwner,
   impersonateOwner,
   endImpersonation,
+  resetSuperAdminMfa,
   listExpansionRequests,
   approveExpansionRequest,
   rejectExpansionRequest,

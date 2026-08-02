@@ -58,6 +58,10 @@ jobs:
           JWT_REFRESH_EXPIRY: 7d
           OTP_EXPIRY: 300
           OTP_MAX_ATTEMPTS: 3
+          # Remediation Pass 2 / SEC-002: dummy, CI-only 64-hex-char key —
+          # correctly shaped so env.config.js's boot-time format validation
+          # passes, not a real secret and never used outside this pipeline.
+          MFA_ENCRYPTION_KEY: 90d50cfb120e9b36e2b5bc4a4f46cbf2daf7aa4772d24473e83b9a32627366d2
 
       - name: Run health-check smoke test
         run: |
@@ -69,4 +73,5 @@ jobs:
           MONGODB_URI: mongodb://localhost:27017/sakanify_test
           JWT_ACCESS_SECRET: ci-test-access-secret-not-for-production
           JWT_REFRESH_SECRET: ci-test-refresh-secret-not-for-production
+          MFA_ENCRYPTION_KEY: 90d50cfb120e9b36e2b5bc4a4f46cbf2daf7aa4772d24473e83b9a32627366d2
           PORT: 5000

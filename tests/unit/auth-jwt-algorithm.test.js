@@ -13,6 +13,11 @@
 process.env.MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sakanify_unit_test_placeholder';
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'unit-test-access-secret';
 process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'unit-test-refresh-secret';
+// Remediation Pass 2 / SEC-002: env.config.js now requires a correctly-shaped
+// MFA_ENCRYPTION_KEY (64 hex chars) to boot at all — this placeholder keeps
+// this file independently runnable outside the full CI env, same reasoning
+// as the two JWT placeholders above.
+process.env.MFA_ENCRYPTION_KEY = process.env.MFA_ENCRYPTION_KEY || '0'.repeat(64);
 
 const jwt = require('jsonwebtoken');
 const authService = require('../../src/modules/auth/auth.service');

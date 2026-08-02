@@ -34,6 +34,11 @@ router.post('/owners/:ownerId/reactivate', adminController.reactivateOwner);
 router.post('/owners/:ownerId/impersonate', adminController.impersonateOwner);
 router.post('/impersonate/:jti/end', adminController.endImpersonation);
 
+// --- Remediation Pass 2 / SEC-002, implementation step 8: admin-assisted
+// MFA reset (Super-Admin-only target, rejects self-reset — see
+// admin.service.resetSuperAdminMfa) ---
+router.post('/super-admins/:id/reset-mfa', adminController.resetSuperAdminMfa);
+
 // --- Step 5: Expansion Queue ---
 router.get('/expansion-requests', adminController.listExpansionRequests);
 router.post('/expansion-requests/:subscriptionId/:expansionRequestId/approve', adminController.approveExpansionRequest);

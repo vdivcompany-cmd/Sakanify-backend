@@ -94,7 +94,18 @@ async function seedSuperAdmin() {
     console.log('   1. Store these credentials securely');
     console.log('   2. Change password on first login');
     console.log('   3. This account has access to ALL data (use carefully)');
-    console.log('   4. Enable 2FA when available (future phase)');
+    // Remediation Pass 2 / SEC-002: MFA is now MANDATORY for every
+    // Super-Admin (schema defaults already give this account mfa_enabled:
+    // false, so no functional change was needed here — only this stale
+    // "future phase" message, which predates SEC-002 and no longer
+    // reflects reality). The very first login with this password will be
+    // gated by authService.loginOwner()'s mfa_enabled: false branch, which
+    // returns a one-time setup_token instead of real session tokens —
+    // POST /api/auth/mfa/setup must be completed before this account can
+    // do anything else.
+    console.log('   4. MFA is MANDATORY: first login returns a setup token, not a session —');
+    console.log('      complete enrollment via POST /api/auth/mfa/setup before this account');
+    console.log('      can access any protected endpoint.');
     console.log('\n');
 
     process.exit(0);

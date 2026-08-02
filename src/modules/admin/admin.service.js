@@ -289,6 +289,56 @@ async function endImpersonation(jti, adminUserId) {
 }
 
 /**
+ * Remediation Pass 2 / SEC-002, implementation step 8: admin-assisted MFA
+ * reset for a Super-Admin who has lost their authenticator device/backup
+ * codes. Two guard rails, both mandatory per the spec:
+ *
+ *   1. The target must actually be a Super-Admin — this endpoint has no
+ *      business touching an Owner or Student account's (nonexistent) MFA
+ *      fields.
+ *   2. `targetUserId !== actorUserId` — a Super-Admin cannot reset their
+ *      own MFA through this "admin-assisted" path. If a Super-Admin is
+ *      genuinely locked out of their own account, that has to go through
+ *      a second admin (or a future documented break-glass procedure), not
+ *      a self-service escape hatch that would defeat the entire point of
+ *      making MFA mandatory in the first place.
+ *
+ * The actual field-clearing is delegated to authService.resetMfaForUser
+ * (auth.service.js), which does NOT audit-log itself (see that function's
+ * doc comment) — this function writes the one audit entry for the whole
+ * operation, naming both the actor (who reset it) and the target (whose
+ * MFA was reset), so the activity feed shows this as a single,
+ * admin-attributed event.
+ */
+async function resetSuperAdminMfa(targetUserId, actorUserId) {
+  if (String(targetUserId) === String(actorUserId)) {
+    throw new AppError('A Super-Admin cannot reset their own MFA through this endpoint', 403);
+  }
+
+  const targetUser = await authService.getUserById(targetUserId);
+  if (!targetUser) {
+    throw new AppError('User not found', 404);
+  }
+
+  if (targetUser.role !== ROLES.SUPER_ADMIN) {
+    throw new AppError('This endpoint can only reset MFA for a Super-Admin account', 422);
+  }
+
+  await authService.resetMfaForUser(targetUserId);
+
+  await auditService.writeAuditLog({
+    actor: actorUserId,
+    action: 'mfa_reset_by_admin',
+    entityType: 'User',
+    entityId: targetUserId,
+    beforeState: { mfa_enabled: targetUser.mfa_enabled === true },
+    afterState: { mfa_enabled: false },
+  });
+
+  return { user_id: targetUserId, mfa_enabled: false };
+}
+
+/**
  * Implementation step 6: platform-wide activity feed, pulled from the
  * shared audit module across every owner/building — pagination is
  * mandatory (CLAUDE.md Section 4.2), date-range filtering is optional per
@@ -333,6 +383,7 @@ module.exports = {
   reactivateOwner,
   impersonateOwner,
   endImpersonation,
+  resetSuperAdminMfa,
   getActivityFeed,
   getPlatformMetrics,
 };

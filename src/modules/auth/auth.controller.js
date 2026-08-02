@@ -149,9 +149,22 @@ async function loginOwner(req, res) {
     }
 
     const result = await authService.loginOwner(email, password);
+
+    // Remediation Pass 2 / SEC-002: the top-level message must reflect what
+    // actually happened — "Logged in successfully" would be misleading for
+    // a Super-Admin who does NOT yet have a real session (see
+    // authService.loginOwner's mfa_enabled branches). The Owner path
+    // (neither flag set) is completely unaffected.
+    let message = 'Logged in successfully';
+    if (result.mfaSetupRequired) {
+      message = 'MFA setup is required before you can access the platform.';
+    } else if (result.mfaVerificationRequired) {
+      message = 'Enter your authenticator code to complete login.';
+    }
+
     return success(res, {
       statusCode: 200,
-      message: 'Logged in successfully',
+      message,
       data: result,
     });
   } catch (err) {

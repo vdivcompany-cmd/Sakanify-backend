@@ -96,6 +96,28 @@ async function verifyToken(req, res, next) {
         return next();
       }
 
+      // Remediation Pass 2 / SEC-002 hardening: reject any token whose
+      // `type` claim isn't 'access' here. Before this pass, only
+      // 'impersonation' was special-cased above — anything else (including
+      // a 'refresh' token, or the new 'mfa_setup'/'mfa_pending' scoped
+      // tokens this pass introduces) fell through to this normal path and
+      // would have been accepted as a full session token purely because it
+      // was signed with the same accessSecret and carried a valid
+      // userId/role. That was previously harmless only by accident: no
+      // other token type was ever signed with accessSecret before this
+      // pass (refresh tokens use a separate refreshSecret). Now that
+      // mfa_setup/mfa_pending tokens exist and ARE signed with
+      // accessSecret (so they reuse this same jwt.verify call), this check
+      // is load-bearing — without it, a narrowly-scoped MFA token could be
+      // used to reach any protected endpoint in the API, not just the
+      // /mfa/* routes it was actually issued for.
+      if (decoded.type !== 'access') {
+        return error(res, {
+          statusCode: 401,
+          message: 'This token cannot be used to access this endpoint',
+        });
+      }
+
       const user = await authRepository.findUserById(decoded.userId);
       if (!user || user.status !== 'active') {
         return error(res, {
@@ -204,6 +226,107 @@ function ownershipScoping(authenticatedOwnerId, resourceOwnerId) {
   }
 }
 
+/**
+ * Remediation Pass 2 / SEC-002: authorizes POST /api/auth/mfa/setup.
+ * Accepts exactly two token shapes (decision 3: "callable only with a
+ * valid 'setup token' ... or by an already-fully-authenticated
+ * Super-Admin re-generating their setup"), both signed with accessSecret
+ * so a single jwt.verify call (via authService.verifyToken(token,
+ * 'access'), which only checks signature/algorithm — NOT the `type`
+ * claim) covers both:
+ *
+ *   - type: 'access', role: SUPER_ADMIN — a real, currently-valid full
+ *     session. Same liveness checks as the normal verifyToken() above
+ *     (account active, not invalidated since issue) apply, since this IS
+ *     a real session token being reused for a second purpose.
+ *   - type: 'mfa_setup', role: SUPER_ADMIN — the narrow token
+ *     authService.loginOwner() issues when mfa_enabled is false. No
+ *     tokens_invalidated_at check: this is a one-shot action token, not a
+ *     session, so that mechanism doesn't apply to it.
+ *
+ * Any other type (including 'mfa_pending' or 'refresh') is rejected here,
+ * same reasoning as the hardening in verifyToken() above.
+ */
+async function verifyMfaSetupAccess(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return error(res, { statusCode: 401, message: 'Missing or invalid Authorization header' });
+    }
+
+    const token = authHeader.slice(7);
+    let decoded;
+    try {
+      decoded = authService.verifyToken(token, 'access');
+    } catch (jwtError) {
+      return error(res, { statusCode: 401, message: 'Invalid or expired token' });
+    }
+
+    if (decoded.role !== 'super-admin' || (decoded.type !== 'access' && decoded.type !== 'mfa_setup')) {
+      return error(res, { statusCode: 401, message: 'This token cannot be used to access MFA setup' });
+    }
+
+    const user = await authRepository.findUserById(decoded.userId);
+    if (!user || user.status !== 'active') {
+      return error(res, { statusCode: 401, message: 'Account is not active' });
+    }
+
+    if (
+      decoded.type === 'access'
+      && user.tokens_invalidated_at
+      && decoded.iat * 1000 <= user.tokens_invalidated_at.getTime()
+    ) {
+      return error(res, { statusCode: 401, message: 'Token has been invalidated — please log in again' });
+    }
+
+    req.user = {
+      userId: decoded.userId,
+      role: decoded.role,
+      tokenType: decoded.type,
+      pendingSecretEncrypted: decoded.pending_secret_encrypted || null,
+      pendingBackupCodeHashes: decoded.pending_backup_code_hashes || null,
+    };
+    return next();
+  } catch (err) {
+    return error(res, { statusCode: 500, message: 'Authentication error' });
+  }
+}
+
+/**
+ * Remediation Pass 2 / SEC-002: authorizes POST /api/auth/mfa/verify-login.
+ * Strictly requires a 'mfa_pending' token — the one
+ * authService.loginOwner() issues when a Super-Admin with mfa_enabled:
+ * true authenticates correctly. Deliberately does NOT accept a full
+ * 'access' token: there is no legitimate reason to "verify login" for a
+ * session that already exists.
+ */
+async function verifyMfaPendingAccess(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return error(res, { statusCode: 401, message: 'Missing or invalid Authorization header' });
+    }
+
+    const token = authHeader.slice(7);
+    let decoded;
+    try {
+      decoded = authService.verifyScopedMfaToken(token, authService.MFA_PENDING_TOKEN_TYPE);
+    } catch (jwtError) {
+      return error(res, { statusCode: 401, message: 'Invalid or expired MFA session — please log in again' });
+    }
+
+    const user = await authRepository.findUserById(decoded.userId);
+    if (!user || user.status !== 'active') {
+      return error(res, { statusCode: 401, message: 'Account is not active' });
+    }
+
+    req.user = { userId: decoded.userId, role: decoded.role };
+    return next();
+  } catch (err) {
+    return error(res, { statusCode: 500, message: 'Authentication error' });
+  }
+}
+
 // Remediation Pass 1 / SEC-005 (Docs/reports/remediation-pass-1-report.md):
 // an `ownershipScopingMiddleware` function used to live here — a
 // route-level middleware that trusted `req.params.ownerId`/
@@ -223,4 +346,6 @@ module.exports = {
   requireRole,
   requireOwner,
   ownershipScoping,
+  verifyMfaSetupAccess,
+  verifyMfaPendingAccess,
 };

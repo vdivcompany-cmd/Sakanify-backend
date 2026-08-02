@@ -80,6 +80,18 @@ function generateOwnerId() {
 // default) is rejected outright.
 const JWT_ALGORITHM = 'HS256';
 
+// Remediation Pass 2 / SEC-002 (Super-Admin MFA). Two narrow-scope token
+// types, distinct from 'access'/'refresh'/'impersonation': signed with the
+// same accessSecret + HS256 (so they flow through the same jwt.verify call
+// as everything else — no new secret to manage), but auth.middleware
+// .verifyToken now explicitly rejects any type other than 'access' on
+// normal protected routes (see that file's Remediation Pass 2 comment), so
+// neither of these can be used as a substitute for a real access token
+// anywhere else in the API. Only mfa.controller's own scoped-token check
+// accepts them, and only for the one endpoint each is meant for.
+const MFA_SETUP_TOKEN_TYPE = 'mfa_setup';
+const MFA_PENDING_TOKEN_TYPE = 'mfa_pending';
+
 function issueTokens(userId, role, ownerId = null) {
   const accessToken = jwt.sign(
     {
@@ -119,6 +131,81 @@ function verifyToken(token, type = 'access') {
   } catch (error) {
     throw new Error(`Invalid or expired ${type} token`);
   }
+}
+
+/**
+ * Issue a short-lived 'mfa_setup'-typed token (Remediation Pass 2 /
+ * SEC-002, decision 3). Two shapes, both this same function:
+ *
+ *   - Bare (no pending fields): issued by loginOwner() the moment a
+ *     Super-Admin with mfa_enabled: false authenticates correctly — proves
+ *     "this really is this Super-Admin's password," authorizes exactly one
+ *     thing: calling POST /api/auth/mfa/setup.
+ *   - Enriched (pending fields set): issued BY mfa.controller.setup()
+ *     itself, carrying the newly-generated (but not yet persisted — see
+ *     mfa.service.js's header comment) encrypted TOTP secret and hashed
+ *     backup codes. This is what POST /api/auth/mfa/verify-setup requires
+ *     — mfa.controller.verifySetup checks for the presence of
+ *     `pending_secret_encrypted` specifically, so a bare setup token can't
+ *     be used to skip straight to verify-setup without ever calling setup.
+ *
+ * Never persists anything — the pending secret/codes live only inside this
+ * signed, short-lived token until verify-setup confirms a real code and
+ * writes them to the User document for the first time.
+ */
+function issueMfaSetupToken(userId, pendingSecretEncrypted = null, pendingBackupCodeHashes = null) {
+  const payload = {
+    userId,
+    role: ROLES.SUPER_ADMIN,
+    type: MFA_SETUP_TOKEN_TYPE,
+    jti: crypto.randomUUID(),
+  };
+
+  if (pendingSecretEncrypted) payload.pending_secret_encrypted = pendingSecretEncrypted;
+  if (pendingBackupCodeHashes) payload.pending_backup_code_hashes = pendingBackupCodeHashes;
+
+  return jwt.sign(payload, env.jwt.accessSecret, {
+    expiresIn: env.mfa.setupTokenExpiry,
+    algorithm: JWT_ALGORITHM,
+  });
+}
+
+/**
+ * Issue a short-lived 'mfa_pending'-typed token (decision 3): issued by
+ * loginOwner() when a Super-Admin with mfa_enabled: true authenticates
+ * correctly — proves the password was right, authorizes exactly one thing:
+ * calling POST /api/auth/mfa/verify-login to complete the login with a
+ * real TOTP code or backup code.
+ */
+function issueMfaPendingToken(userId) {
+  return jwt.sign(
+    { userId, role: ROLES.SUPER_ADMIN, type: MFA_PENDING_TOKEN_TYPE, jti: crypto.randomUUID() },
+    env.jwt.accessSecret,
+    { expiresIn: env.mfa.pendingTokenExpiry, algorithm: JWT_ALGORITHM },
+  );
+}
+
+/**
+ * Verify a scoped MFA token (setup or pending) and confirm its `type`
+ * claim matches exactly what the caller expects — mfa.controller uses this
+ * instead of the generic verifyToken() above specifically so a
+ * 'mfa_pending' token can never be accepted where a 'mfa_setup' token is
+ * required, or vice versa, even though both are signed with the same
+ * secret/algorithm.
+ */
+function verifyScopedMfaToken(token, expectedType) {
+  let decoded;
+  try {
+    decoded = jwt.verify(token, env.jwt.accessSecret, { algorithms: [JWT_ALGORITHM] });
+  } catch (err) {
+    throw new Error('Invalid or expired MFA token');
+  }
+
+  if (decoded.type !== expectedType) {
+    throw new Error(`This token cannot be used here (expected a "${expectedType}" token)`);
+  }
+
+  return decoded;
 }
 
 /**
@@ -245,7 +332,39 @@ async function loginOwner(email, password) {
     throw new Error('Invalid email or password');
   }
 
-  // Issue tokens
+  // Remediation Pass 2 / SEC-002 (Docs/reports/remediation-pass-2-mfa-report.md,
+  // decision 3): mandatory MFA gate — Super-Admin ONLY. The Owner branch
+  // below is completely untouched by this pass, on purpose (the
+  // remediation spec's own Dependency Note: "this change should not touch
+  // [Owner/Student login] at all"). A correct password no longer means a
+  // real session for a Super-Admin — it means either "go complete MFA
+  // setup" (mfa_enabled: false) or "go verify your authenticator code"
+  // (mfa_enabled: true), never a direct accessToken/refreshToken pair.
+  if (user.role === ROLES.SUPER_ADMIN) {
+    if (!user.mfa_enabled) {
+      const setupToken = issueMfaSetupToken(user._id.toString());
+      return {
+        success: true,
+        userId: user._id,
+        role: user.role,
+        ownerId: user.owner_id,
+        mfaSetupRequired: true,
+        setupToken,
+      };
+    }
+
+    const pendingToken = issueMfaPendingToken(user._id.toString());
+    return {
+      success: true,
+      userId: user._id,
+      role: user.role,
+      ownerId: user.owner_id,
+      mfaVerificationRequired: true,
+      pendingToken,
+    };
+  }
+
+  // Issue tokens (Owner path — unchanged by this pass)
   const { accessToken, refreshToken } = issueTokens(user._id, user.role, user.owner_id);
 
   return {
@@ -382,6 +501,29 @@ async function setUserStatus(userId, status) {
 }
 
 /**
+ * Remediation Pass 2 / SEC-002, implementation step 8: reset a
+ * Super-Admin's MFA enrollment (admin.service.resetSuperAdminMfa calls
+ * this after its own target-exists/not-self checks and BEFORE writing its
+ * own audit log entry — this function itself does not audit-log, matching
+ * the existing setUserStatus() pattern above, which also leaves
+ * audit-logging to its caller). Clears every MFA field back to its
+ * pre-enrollment default, forcing the target through mandatory setup
+ * again on their next login (loginOwner's mfa_enabled: false branch) —
+ * exactly the same state a brand-new Super-Admin account starts in.
+ */
+async function resetMfaForUser(userId) {
+  await User.findByIdAndUpdate(userId, {
+    $set: {
+      mfa_enabled: false,
+      mfa_secret_encrypted: null,
+      mfa_enrolled_at: null,
+      backup_codes: [],
+    },
+  });
+  return { success: true };
+}
+
+/**
  * Password reset: email-based token
  *
  * - Validates email exists
@@ -500,4 +642,11 @@ module.exports = {
   initiatePasswordReset,
   completePasswordReset,
   inviteOwner,
+  // Remediation Pass 2 / SEC-002
+  issueMfaSetupToken,
+  issueMfaPendingToken,
+  verifyScopedMfaToken,
+  resetMfaForUser,
+  MFA_SETUP_TOKEN_TYPE,
+  MFA_PENDING_TOKEN_TYPE,
 };

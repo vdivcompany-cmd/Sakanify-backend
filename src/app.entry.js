@@ -83,6 +83,13 @@ app.get('/health', async (req, res) => {
 // Phase 1: Authentication
 app.use('/api/auth', require('./modules/auth/auth.routes'));
 
+// Remediation Pass 2 / SEC-002: Super-Admin TOTP MFA (setup/verify-setup/
+// verify-login) — deliberately mounted as its own router under the same
+// /api/auth prefix (giving /api/auth/mfa/*) rather than folded into
+// auth.routes.js itself, so its own rate limiters/scoped-token middleware
+// stay self-contained and easy to find/audit as a unit.
+app.use('/api/auth/mfa', require('./modules/auth/mfa.routes'));
+
 // Phase 2: Students & Simplified KYC
 app.use('/api/students', require('./modules/students/student.routes'));
 app.use('/api/kyc', require('./modules/kyc/kyc.routes'));

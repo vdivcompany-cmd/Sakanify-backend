@@ -21,6 +21,14 @@ const REQUIRED_VARS = [
   'MONGODB_URI',
   'JWT_ACCESS_SECRET',
   'JWT_REFRESH_SECRET',
+  // Remediation Pass 2 / SEC-002 (Super-Admin MFA): required, not optional,
+  // same tier as the JWT secrets — the moment MFA enrollment is mandatory
+  // for every Super-Admin account, the app cannot correctly serve a
+  // Super-Admin login without a working key to encrypt/decrypt TOTP
+  // secrets at rest. Failing fast here (same philosophy as every other
+  // REQUIRED_VARS entry) is safer than discovering a missing/misconfigured
+  // key only when the first Super-Admin tries to enroll.
+  'MFA_ENCRYPTION_KEY',
 ];
 const STORAGE_VARS = [
   'STORAGE_ENDPOINT',
@@ -39,6 +47,20 @@ function loadEnv() {
 
   if (missing.length > 0) {
     console.error(`[env.config] Missing required environment variable(s): ${missing.join(', ')}`);
+    process.exit(1);
+  }
+
+  // Remediation Pass 2 / SEC-002: validate MFA_ENCRYPTION_KEY's shape at
+  // boot too, not just its presence — AES-256-GCM needs exactly a 32-byte
+  // key, and the chosen encoding (64 hex characters) is checked here so a
+  // typo'd/truncated key fails loudly at startup instead of surfacing as a
+  // confusing decrypt failure the first time a Super-Admin logs in.
+  if (!/^[0-9a-fA-F]{64}$/.test(process.env.MFA_ENCRYPTION_KEY)) {
+    console.error(
+      '[env.config] MFA_ENCRYPTION_KEY must be exactly 64 hexadecimal characters '
+        + '(32 bytes, for AES-256-GCM). Generate one with: '
+        + 'node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+    );
     process.exit(1);
   }
 
@@ -65,6 +87,25 @@ function loadEnv() {
     otp: {
       expiry: Number(process.env.OTP_EXPIRY) || 5 * 60, // 5 minutes in seconds
       maxAttempts: Number(process.env.OTP_MAX_ATTEMPTS) || 3,
+    },
+    // Remediation Pass 2 / SEC-002 (Super-Admin MFA). Kept deliberately
+    // separate from `jwt` above even though both are "auth secrets" — this
+    // key encrypts data at rest (TOTP secrets), the JWT secrets sign
+    // tokens; mixing them would make it impossible to rotate one without
+    // touching the other's blast radius.
+    mfa: {
+      encryptionKey: process.env.MFA_ENCRYPTION_KEY,
+      // TOTP tokens are single-use in principle, but a network retry or a
+      // slow admin can legitimately submit the *same* code twice within
+      // its 30s validity window — replay prevention against a captured
+      // code is a separate, harder problem (would need per-user
+      // last-used-timeStep tracking) not attempted in this pass; the
+      // ±window tolerance below is purely clock-drift tolerance between
+      // the server and the admin's authenticator app, not a security
+      // control.
+      totpWindowSeconds: 30,
+      setupTokenExpiry: '10m',
+      pendingTokenExpiry: '10m',
     },
     storage: {
       isConfigured: storageIsConfigured,

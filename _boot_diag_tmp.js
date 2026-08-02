@@ -1,0 +1,30 @@
+const start = Date.now();
+function t(label) {
+  console.log(label, Date.now() - start, 'ms');
+}
+t('start');
+const express = require('express'); t('express');
+const cors = require('cors'); t('cors');
+const helmet = require('helmet'); t('helmet');
+const env = require('./src/config/env.config'); t('env.config');
+const database = require('./src/config/database.config'); t('database.config');
+const storage = require('./src/config/storage.config'); t('storage.config');
+const requestLogger = require('./src/middleware/request-logger.middleware'); t('request-logger');
+const rateLimiter = require('./src/middleware/rate-limiter.middleware'); t('rate-limiter');
+const errorHandler = require('./src/middleware/error-handler.middleware'); t('error-handler');
+const authRoutes = require('./src/modules/auth/auth.routes'); t('auth.routes');
+const mfaRoutes = require('./src/modules/auth/mfa.routes'); t('mfa.routes');
+const studentRoutes = require('./src/modules/students/student.routes'); t('student.routes');
+const kycRoutes = require('./src/modules/kyc/kyc.routes'); t('kyc.routes');
+const buildingRoutes = require('./src/modules/buildings/building.routes'); t('building.routes');
+const apartmentRoutes = require('./src/modules/apartments/apartment.routes'); t('apartment.routes');
+const bedRoutes = require('./src/modules/beds/bed.routes'); t('bed.routes');
+const auditRoutes = require('./src/modules/audit/audit.routes'); t('audit.routes');
+const requestRoutes = require('./src/modules/requests/request.routes'); t('request.routes');
+const rentalRoutes = require('./src/modules/rentals/rental.routes'); t('rental.routes');
+const paymentRoutes = require('./src/modules/payments/payment.routes'); t('payment.routes');
+const subscriptionRoutes = require('./src/modules/subscriptions/subscription.routes'); t('subscription.routes');
+const utilityRoutes = require('./src/modules/utilities/utility-bill.routes'); t('utility.routes');
+const adminRoutes = require('./src/modules/admin/admin.routes'); t('admin.routes');
+const publicRoutes = require('./src/modules/public-site/public.routes'); t('public.routes');
+t('ALL DONE');

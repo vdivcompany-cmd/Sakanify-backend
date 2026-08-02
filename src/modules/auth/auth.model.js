@@ -94,6 +94,51 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
+    // --- MFA (Remediation Pass 2 / SEC-002 — mandatory TOTP for Super-Admin) ---
+    // Applies structurally to every role (simplest schema shape, one User
+    // collection), but enforcement (mandatory setup, login gating) only
+    // ever applies to role === SUPER_ADMIN — see auth.service.loginOwner.
+    // Defaults are migration-safe: every existing account (including
+    // pre-existing Super-Admins) starts with mfa_enabled: false, which
+    // triggers mandatory setup on their next login rather than requiring a
+    // separate backfill step.
+    mfa_enabled: {
+      type: Boolean,
+      default: false,
+    },
+
+    // Encrypted (AES-256-GCM, see mfa.service.encryptSecret) TOTP secret —
+    // never the raw base32 secret. select: false for the same reason
+    // password_hash is: this should never come back in a normal query, only
+    // when a service explicitly opts in via .select('+mfa_secret_encrypted').
+    mfa_secret_encrypted: {
+      type: String,
+      default: null,
+      select: false,
+    },
+
+    mfa_enrolled_at: {
+      type: Date,
+      default: null,
+    },
+
+    // 10 single-use backup codes generated at enrollment (decision 6):
+    // shown to the admin exactly once in the /mfa/verify-setup response,
+    // never retrievable again — only the bcrypt hash of each is ever
+    // persisted, same standard as password_hash. select: false so a normal
+    // query never returns even the hashes.
+    backup_codes: {
+      type: [
+        {
+          _id: false,
+          code_hash: { type: String, required: true },
+          used_at: { type: Date, default: null },
+        },
+      ],
+      default: [],
+      select: false,
+    },
+
     // --- Timestamps ---
     created_at: {
       type: Date,
