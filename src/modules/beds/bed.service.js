@@ -53,6 +53,16 @@ async function countBedsForOwner(ownerId) {
 }
 
 /**
+ * Phase 7 addition: bed counts for many owners at once — see
+ * bed.repository.countByOwnerIds's comment. Used by admin.service to
+ * compute each owner's "actual usage" in the platform-wide table in a
+ * single query regardless of how many owners are on the page.
+ */
+async function countBedsForOwnerIds(ownerIds) {
+  return bedRepository.countByOwnerIds(ownerIds);
+}
+
+/**
  * Bed count for a single apartment — used by apartment.service to decide
  * whether an apartment is safe to delete (implementation step 8), without
  * apartment.service reaching into the Bed collection directly
@@ -183,6 +193,7 @@ async function listAllBedsForApartments(apartmentIds) {
 module.exports = {
   createBed,
   countBedsForOwner,
+  countBedsForOwnerIds,
   listBedsForApartment,
   countBedsForApartment,
   getBedById,

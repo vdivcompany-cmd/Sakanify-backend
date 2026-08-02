@@ -135,6 +135,25 @@ async function setUtilitiesIncludedInRent(buildingId, utilitiesIncludedInRent, a
   return updated;
 }
 
+/**
+ * Phase 7 addition (Docs/phase-7-admin.md, implementation step 7):
+ * platform-wide "total active buildings" metric for the Super-Admin
+ * dashboard — see building.repository.countAll's comment for what
+ * "active" means here.
+ */
+async function countAllBuildings() {
+  return buildingRepository.countAll();
+}
+
+/**
+ * Phase 7 addition: buildings-per-owner counts for many owners in one
+ * query — backs admin.service's platform-wide owners/buildings table
+ * without an N+1 per-owner count (CLAUDE.md Section 4.4).
+ */
+async function countBuildingsByOwnerIds(ownerIds) {
+  return buildingRepository.countByOwnerIds(ownerIds);
+}
+
 module.exports = {
   createBuilding,
   listBuildingsForOwner,
@@ -144,4 +163,6 @@ module.exports = {
   deleteBuilding,
   getBuildingOccupancy,
   setUtilitiesIncludedInRent,
+  countAllBuildings,
+  countBuildingsByOwnerIds,
 };

@@ -18,27 +18,41 @@ function findByEntity(entityType, entityId) {
 }
 
 /**
- * List audit entries with optional filters, paginated.
- * filters: { entityType?, entityId?, actor?, action? }
+ * Builds the shared filter object for list()/count() below.
+ *
+ * `startDate`/`endDate` (Phase 7 addition, Docs/phase-7-admin.md
+ * implementation step 6 — "optional date-range filtering" on the
+ * platform-wide activity feed) filter on `created_at`. This is an
+ * additive, backward-compatible retrofit onto the Phase 3 audit module:
+ * every existing caller (bed-history.service, kyc.service,
+ * request.service, etc.) keeps working unchanged since it never passes
+ * these keys.
  */
-function list(filters = {}, { skip = 0, limit = 20 } = {}) {
+function buildQuery(filters = {}) {
   const query = {};
   if (filters.entityType) query.entity_type = filters.entityType;
   if (filters.entityId) query.entity_id = filters.entityId;
   if (filters.actor) query.actor = filters.actor;
   if (filters.action) query.action = filters.action;
+  if (filters.startDate || filters.endDate) {
+    query.created_at = {};
+    if (filters.startDate) query.created_at.$gte = filters.startDate;
+    if (filters.endDate) query.created_at.$lte = filters.endDate;
+  }
 
-  return Audit.find(query).sort({ created_at: -1 }).skip(skip).limit(limit);
+  return query;
+}
+
+/**
+ * List audit entries with optional filters, paginated.
+ * filters: { entityType?, entityId?, actor?, action?, startDate?, endDate? }
+ */
+function list(filters = {}, { skip = 0, limit = 20 } = {}) {
+  return Audit.find(buildQuery(filters)).sort({ created_at: -1 }).skip(skip).limit(limit);
 }
 
 function count(filters = {}) {
-  const query = {};
-  if (filters.entityType) query.entity_type = filters.entityType;
-  if (filters.entityId) query.entity_id = filters.entityId;
-  if (filters.actor) query.actor = filters.actor;
-  if (filters.action) query.action = filters.action;
-
-  return Audit.countDocuments(query);
+  return Audit.countDocuments(buildQuery(filters));
 }
 
 module.exports = {

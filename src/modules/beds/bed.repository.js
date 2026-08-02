@@ -34,6 +34,17 @@ function countByOwner(ownerId) {
   return Bed.countDocuments({ owner_id: ownerId });
 }
 
+// Phase 7 addition: bed counts for many owners in one aggregation query —
+// backs admin.service's platform-wide owners/buildings table without an
+// N+1 per-owner count when rendering a page of owners (CLAUDE.md
+// Section 4.4).
+function countByOwnerIds(ownerIds) {
+  return Bed.aggregate([
+    { $match: { owner_id: { $in: ownerIds } } },
+    { $group: { _id: '$owner_id', count: { $sum: 1 } } },
+  ]);
+}
+
 // Unpaginated, single query for many apartments at once — used by the
 // nested building->apartments->beds read so fetching N apartments' beds
 // never turns into N queries (CLAUDE.md Section 4.4).
@@ -92,6 +103,7 @@ module.exports = {
   findByApartment,
   countByApartment,
   countByOwner,
+  countByOwnerIds,
   findAllByApartmentIds,
   updateById,
   conditionalUpdateStatus,

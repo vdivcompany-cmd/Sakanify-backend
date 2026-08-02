@@ -71,6 +71,17 @@ function existsPendingForStudentAndOwner(studentId, ownerId) {
   return Request.exists({ student: studentId, owner_id: ownerId, status: REQUEST_STATUS.PENDING });
 }
 
+// Phase 7 addition (Docs/phase-7-admin.md, implementation step 7):
+// platform-wide request-status breakdown for the "total requests vs.
+// confirmed rentals" conversion funnel — one aggregation query regardless
+// of how many requests exist (CLAUDE.md Section 4.4/8), same pattern as
+// bed.repository.aggregateStatusCounts.
+function aggregateStatusCounts() {
+  return Request.aggregate([
+    { $group: { _id: '$status', count: { $sum: 1 } } },
+  ]);
+}
+
 module.exports = {
   create,
   findById,
@@ -82,4 +93,5 @@ module.exports = {
   updateById,
   findExpiredPending,
   existsPendingForStudentAndOwner,
+  aggregateStatusCounts,
 };

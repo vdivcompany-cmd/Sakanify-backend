@@ -50,6 +50,14 @@ function updateStatusById(kycId, updates) {
   return Kyc.findByIdAndUpdate(kycId, { $set: updates }, { new: true, runValidators: true });
 }
 
+// Phase 7 addition (Docs/phase-7-admin.md, implementation step 7):
+// platform-wide "total verified students" metric — a single indexed
+// countDocuments on verification_status, never a full-collection load
+// (CLAUDE.md Section 4.4/8).
+function countByStatus(status) {
+  return Kyc.countDocuments({ verification_status: status });
+}
+
 module.exports = {
   findByStudentId,
   findByStudentIdWithSensitiveFields,
@@ -58,4 +66,5 @@ module.exports = {
   create,
   updateByStudentId,
   updateStatusById,
+  countByStatus,
 };

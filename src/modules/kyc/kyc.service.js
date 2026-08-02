@@ -153,10 +153,19 @@ async function updateVerificationStatus(kycId, newStatus, reviewerUserId) {
   return updated;
 }
 
+/**
+ * Phase 7 addition: total verified students across the whole platform —
+ * see kyc.repository.countByStatus's comment.
+ */
+async function countVerifiedStudents() {
+  return kycRepository.countByStatus(VERIFICATION_STATUS.VERIFIED);
+}
+
 module.exports = {
   createInitialKyc,
   getMyKyc,
   getKycMapForStudents,
   resubmitKyc,
   updateVerificationStatus,
+  countVerifiedStudents,
 };

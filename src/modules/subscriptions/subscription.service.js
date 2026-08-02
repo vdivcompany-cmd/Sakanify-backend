@@ -163,12 +163,164 @@ async function canAcceptNewRequests(ownerId) {
   return subscription.status !== SUBSCRIPTION_STATUS.SUSPENDED;
 }
 
+/**
+ * Phase 7 addition (Docs/phase-7-admin.md, "Added After Phase 6 Review"
+ * point 3): Super-Admin-only direct capacity adjustment outside the
+ * normal request/approval flow. Deliberately does NOT block a new
+ * capacity that's below the owner's currently-used bed count — that's an
+ * explicit admin action, not a bug — but returns a clear warning string
+ * so the caller (admin.controller) can surface it, rather than silently
+ * succeeding. Lives here (not in admin.service) because it writes
+ * directly to the Subscription collection, which only this module may
+ * touch per CLAUDE.md Section 7.2; admin.service calls this function
+ * rather than reaching into subscription.repository/model itself.
+ */
+async function manualCapacityOverride(ownerId, newCapacity, actorUserId) {
+  if (typeof newCapacity !== 'number' || !Number.isFinite(newCapacity) || newCapacity <= 0) {
+    throw new AppError('new_capacity must be a positive number', 422);
+  }
+
+  const subscription = await getSubscriptionForOwner(ownerId);
+  const bedsUsed = await bedService.countBedsForOwner(ownerId);
+  const beforeCapacity = subscription.total_bed_capacity;
+
+  const updated = await subscriptionRepository.updateByOwner(ownerId, { total_bed_capacity: newCapacity });
+
+  await auditService.writeAuditLog({
+    actor: actorUserId,
+    action: 'subscription_capacity_manually_overridden',
+    entityType: 'Subscription',
+    entityId: subscription._id,
+    beforeState: { total_bed_capacity: beforeCapacity },
+    afterState: { total_bed_capacity: newCapacity },
+  });
+
+  const warning = newCapacity < bedsUsed
+    ? `Warning: new capacity (${newCapacity}) is below the owner's currently-used bed count (${bedsUsed}). The override was applied as requested — the owner is now over-capacity.`
+    : null;
+
+  return { subscription: updated, beds_used: bedsUsed, warning };
+}
+
+/**
+ * Phase 7's expansion queue (Docs/phase-7-admin.md, implementation step 5)
+ * — every subscription across every owner with at least one PENDING
+ * expansion request, paginated. Returned as a flat, per-request list
+ * (one row per pending expansion request, not one row per subscription
+ * with a nested array) since that's what a Super-Admin queue UI actually
+ * needs to act on.
+ */
+async function listPendingExpansionRequests({ skip = 0, limit = 20 } = {}) {
+  const [subscriptions, total] = await Promise.all([
+    subscriptionRepository.findWithPendingExpansionRequests({ skip, limit }),
+    subscriptionRepository.countWithPendingExpansionRequests(),
+  ]);
+
+  const rows = [];
+  for (const subscription of subscriptions) {
+    for (const req of subscription.expansion_requests) {
+      if (req.status !== EXPANSION_REQUEST_STATUS.PENDING) continue;
+      rows.push({
+        subscription_id: subscription._id,
+        owner_id: subscription.owner_id,
+        expansion_request_id: req._id,
+        current_capacity: subscription.total_bed_capacity,
+        requested_capacity: req.requested_capacity,
+        reason: req.reason,
+        requested_at: req.requested_at,
+      });
+    }
+  }
+
+  return { rows, total };
+}
+
+async function findSubscriptionExpansionRequest(subscriptionId, expansionRequestId) {
+  const subscription = await subscriptionRepository.findById(subscriptionId);
+  if (!subscription) {
+    throw new AppError('Subscription not found', 404);
+  }
+  const expansionRequest = subscription.expansion_requests.id(expansionRequestId);
+  if (!expansionRequest) {
+    throw new AppError('Expansion request not found', 404);
+  }
+  if (expansionRequest.status !== EXPANSION_REQUEST_STATUS.PENDING) {
+    throw new AppError(`Expansion request is not pending (current status: "${expansionRequest.status}")`, 409);
+  }
+  return { subscription, expansionRequest };
+}
+
+/**
+ * Approve a pending expansion request: sets it APPROVED and — per
+ * implementation step 5 — actually raises total_bed_capacity to the
+ * requested value, atomically, in the same update (see
+ * subscriptionRepository.resolveExpansionRequest).
+ */
+async function approveExpansionRequest(subscriptionId, expansionRequestId, actorUserId) {
+  const { subscription, expansionRequest } = await findSubscriptionExpansionRequest(subscriptionId, expansionRequestId);
+
+  const updated = await subscriptionRepository.resolveExpansionRequest(subscriptionId, expansionRequestId, {
+    status: EXPANSION_REQUEST_STATUS.APPROVED,
+    resolvedBy: actorUserId,
+    newCapacity: expansionRequest.requested_capacity,
+  });
+
+  await auditService.writeAuditLog({
+    actor: actorUserId,
+    action: 'subscription_expansion_approved',
+    entityType: 'Subscription',
+    entityId: subscription._id,
+    beforeState: { total_bed_capacity: subscription.total_bed_capacity },
+    afterState: { total_bed_capacity: expansionRequest.requested_capacity, expansion_request_id: expansionRequestId },
+  });
+
+  return updated;
+}
+
+/**
+ * Reject a pending expansion request: sets it REJECTED, capacity
+ * untouched.
+ */
+async function rejectExpansionRequest(subscriptionId, expansionRequestId, actorUserId) {
+  const { subscription } = await findSubscriptionExpansionRequest(subscriptionId, expansionRequestId);
+
+  const updated = await subscriptionRepository.resolveExpansionRequest(subscriptionId, expansionRequestId, {
+    status: EXPANSION_REQUEST_STATUS.REJECTED,
+    resolvedBy: actorUserId,
+  });
+
+  await auditService.writeAuditLog({
+    actor: actorUserId,
+    action: 'subscription_expansion_rejected',
+    entityType: 'Subscription',
+    entityId: subscription._id,
+    beforeState: { total_bed_capacity: subscription.total_bed_capacity },
+    afterState: { expansion_request_id: expansionRequestId, status: 'rejected' },
+  });
+
+  return updated;
+}
+
+/**
+ * Phase 7 addition: subscriptions for many owners at once — backs
+ * admin.service's platform-wide owners/buildings table (see
+ * subscriptionRepository.findByOwnerIds's comment).
+ */
+async function getSubscriptionsForOwnerIds(ownerIds) {
+  return subscriptionRepository.findByOwnerIds(ownerIds);
+}
+
 module.exports = {
   createSubscription,
   getSubscriptionForOwner,
+  getSubscriptionsForOwnerIds,
   getUsageForOwner,
   requestExpansion,
   updateStatus,
   canAcceptNewRequests,
+  manualCapacityOverride,
+  listPendingExpansionRequests,
+  approveExpansionRequest,
+  rejectExpansionRequest,
   USAGE_WARNING_THRESHOLD,
 };

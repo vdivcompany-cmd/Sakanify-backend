@@ -300,6 +300,39 @@ async function hasPendingRequestWithOwner(studentId, ownerId) {
   return Boolean(await requestRepository.existsPendingForStudentAndOwner(studentId, ownerId));
 }
 
+/**
+ * Phase 7 addition (Docs/phase-7-admin.md, implementation step 7):
+ * platform-wide request -> confirmed-rental conversion funnel for the
+ * Super-Admin metrics dashboard. REQUEST_STATUS.APPROVED is this
+ * codebase's "confirmed" state (see constants.config.js's note on why
+ * APPROVED is reused rather than a second "confirmed" literal), so
+ * confirmed_rentals is read directly off the same aggregation rather than
+ * a second query against the Rental collection.
+ */
+async function getRequestFunnelStats() {
+  const grouped = await requestRepository.aggregateStatusCounts();
+
+  const byStatus = Object.values(REQUEST_STATUS).reduce((acc, status) => {
+    acc[status] = 0;
+    return acc;
+  }, {});
+
+  let total = 0;
+  for (const row of grouped) {
+    byStatus[row._id] = row.count;
+    total += row.count;
+  }
+
+  const confirmedRentals = byStatus[REQUEST_STATUS.APPROVED];
+
+  return {
+    total_requests: total,
+    by_status: byStatus,
+    confirmed_rentals: confirmedRentals,
+    conversion_rate_percent: total > 0 ? Math.round((confirmedRentals / total) * 1000) / 10 : 0,
+  };
+}
+
 module.exports = {
   createRequest,
   getRequestById,
@@ -309,6 +342,7 @@ module.exports = {
   rejectRequest,
   expireRequest,
   hasPendingRequestWithOwner,
+  getRequestFunnelStats,
   EXPIRY_WINDOW_HOURS,
   MAX_PENDING_REQUESTS_PER_STUDENT,
 };

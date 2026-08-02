@@ -15,14 +15,35 @@
 
 const { error } = require('../shared/utils/response.util');
 const authService = require('../modules/auth/auth.service');
+const authRepository = require('../modules/auth/auth.repository');
+const adminRepository = require('../modules/admin/admin.repository');
 
 /**
  * Verify JWT access token and attach user info to req.user
  *
  * Expected header: Authorization: Bearer <token>
  * Sets req.user = { userId, role, ownerId }
+ *
+ * Phase 7 addition: after the JWT signature/expiry check passes, this now
+ * also does a real-time DB check so account suspension and logout/
+ * password-reset actually take effect immediately, not just at the
+ * token's natural ~15-30 minute expiry:
+ *   1. The user must still exist and have status === 'active'.
+ *   2. The token's `iat` (issued-at) must be AFTER the user's
+ *      `tokens_invalidated_at` cutoff, if one is set.
+ * See auth.model.js's `tokens_invalidated_at` comment for why this check
+ * didn't exist before Phase 7 and why it was necessary to add it — a
+ * suspend/logout that only ever looked like it worked (cosmetic) is
+ * exactly the failure mode CLAUDE.md and this phase's spec call out.
+ *
+ * Impersonation tokens (Phase 7, admin.service.impersonateOwner) are a
+ * distinct `type: 'impersonation'` token, handled separately below: they
+ * are checked against the ImpersonationSession record (by jti) rather than
+ * the target owner's own status/invalidation cutoff, since a super-admin
+ * may deliberately need to impersonate a suspended owner for support
+ * purposes — see admin.service.js's doc comment on this decision.
  */
-function verifyToken(req, res, next) {
+async function verifyToken(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
 
@@ -35,8 +56,60 @@ function verifyToken(req, res, next) {
 
     const token = authHeader.slice(7); // Remove "Bearer " prefix
 
+    let decoded;
     try {
-      const decoded = authService.verifyToken(token, 'access');
+      decoded = authService.verifyToken(token, 'access');
+    } catch (jwtError) {
+      return error(res, {
+        statusCode: 401,
+        message: 'Invalid or expired access token',
+      });
+    }
+
+    try {
+      if (decoded.type === 'impersonation') {
+        const session = await adminRepository.findActiveByJti(decoded.jti);
+        if (!session) {
+          return error(res, {
+            statusCode: 401,
+            message: 'Impersonation session has ended or is invalid',
+          });
+        }
+
+        const admin = await authRepository.findUserById(decoded.impersonating_admin_id);
+        if (!admin || admin.status !== 'active') {
+          return error(res, {
+            statusCode: 401,
+            message: 'Impersonating admin account is no longer active',
+          });
+        }
+
+        req.user = {
+          userId: decoded.userId,
+          role: decoded.role,
+          ownerId: decoded.ownerId,
+          impersonation: {
+            adminId: decoded.impersonating_admin_id,
+            jti: decoded.jti,
+          },
+        };
+        return next();
+      }
+
+      const user = await authRepository.findUserById(decoded.userId);
+      if (!user || user.status !== 'active') {
+        return error(res, {
+          statusCode: 401,
+          message: 'Account is not active',
+        });
+      }
+
+      if (user.tokens_invalidated_at && decoded.iat * 1000 <= user.tokens_invalidated_at.getTime()) {
+        return error(res, {
+          statusCode: 401,
+          message: 'Token has been invalidated — please log in again',
+        });
+      }
 
       // Attach user info to request
       req.user = {
@@ -45,11 +118,12 @@ function verifyToken(req, res, next) {
         ownerId: decoded.ownerId, // Can be null for students/super-admins
       };
 
-      next();
-    } catch (jwtError) {
+      return next();
+    } catch (dbError) {
+      console.error('[auth.middleware:verifyToken] session-validity check failed', dbError);
       return error(res, {
-        statusCode: 401,
-        message: 'Invalid or expired access token',
+        statusCode: 500,
+        message: 'Authentication error',
       });
     }
   } catch (err) {

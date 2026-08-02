@@ -76,6 +76,9 @@ app.use('/api/payments', require('./modules/payments/payment.routes'));
 app.use('/api/subscriptions', require('./modules/subscriptions/subscription.routes'));
 app.use('/api/utilities', require('./modules/utilities/utility-bill.routes'));
 
+// Phase 7: Super-Admin / V Div Control Center
+app.use('/api/admin', require('./modules/admin/admin.routes'));
+
 // --- 404 fallback for unknown routes ---
 app.use((req, res) => {
   return res.status(404).json({ success: false, message: `Route not found: ${req.method} ${req.originalUrl}` });

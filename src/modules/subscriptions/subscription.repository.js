@@ -52,6 +52,58 @@ function findWithPendingExpansionRequests({ skip = 0, limit = 20 } = {}) {
     .limit(limit);
 }
 
+function countWithPendingExpansionRequests() {
+  return Subscription.countDocuments({ 'expansion_requests.status': 'pending' });
+}
+
+/**
+ * Platform-wide, unpaginated-by-owner read for Phase 7's admin
+ * owners/buildings table. Only the fields the table actually needs —
+ * never the full expansion_requests array (that has its own dedicated
+ * queue endpoint) — kept lean since this runs once per page of owners,
+ * not once per owner (CLAUDE.md Section 4.4).
+ */
+function findByOwnerIds(ownerIds) {
+  return Subscription.find({ owner_id: { $in: ownerIds } }).select(
+    'owner_id tier_name total_bed_capacity monthly_price status renewal_date',
+  );
+}
+
+/**
+ * Resolve (approve/reject) a single expansion-request sub-document by its
+ * own `_id`, using a positional arrayFilter so this is a single atomic
+ * update against the exact matching sub-document — never a read the whole
+ * array/mutate in memory/write the whole array back pattern, which would
+ * risk clobbering a concurrent expansion request submitted by the same
+ * owner in between the read and the write.
+ *
+ * When `newCapacity` is provided (the approval path — implementation step
+ * 5: "approving updates the relevant subscription's capacity"),
+ * total_bed_capacity is set in the same atomic update as the status
+ * change, so a reader can never observe "approved" with the old capacity
+ * still in effect.
+ */
+function resolveExpansionRequest(subscriptionId, expansionRequestId, { status, resolvedBy, newCapacity } = {}) {
+  const setFields = {
+    'expansion_requests.$[req].status': status,
+    'expansion_requests.$[req].resolved_at': new Date(),
+    'expansion_requests.$[req].resolved_by': resolvedBy,
+  };
+  if (typeof newCapacity === 'number') {
+    setFields.total_bed_capacity = newCapacity;
+  }
+
+  return Subscription.findOneAndUpdate(
+    { _id: subscriptionId, 'expansion_requests._id': expansionRequestId },
+    { $set: setFields },
+    {
+      new: true,
+      runValidators: true,
+      arrayFilters: [{ 'req._id': expansionRequestId }],
+    },
+  );
+}
+
 module.exports = {
   create,
   findByOwner,
@@ -59,4 +111,7 @@ module.exports = {
   updateByOwner,
   pushExpansionRequest,
   findWithPendingExpansionRequests,
+  countWithPendingExpansionRequests,
+  findByOwnerIds,
+  resolveExpansionRequest,
 };

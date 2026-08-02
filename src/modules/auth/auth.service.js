@@ -290,22 +290,81 @@ async function refreshAccessToken(refreshToken) {
 }
 
 /**
- * Logout: invalidate refresh tokens
+ * Invalidate every currently-issued access/refresh token for a user,
+ * effective immediately (Phase 7 fix — see auth.model.js's
+ * `tokens_invalidated_at` comment for why this is the real enforcement
+ * mechanism, not the write-only `invalidated_token_versions` array from
+ * Phase 1). Shared by logout(), initiatePasswordReset(), and — the reason
+ * this was pulled out into its own exported function — Phase 7's
+ * admin.service.suspendOwner(), which needs to "reuse the same
+ * token-invalidation mechanism built in Phase 1" for the account it just
+ * suspended (Docs/phase-7-admin.md, "Added After Phase 6 Review" point 2).
  *
- * - Adds a token version to invalidation list
- * - Forces user to use new tokens on next login
+ * Kept the `invalidated_token_versions` push too (harmless, preserves the
+ * existing audit-adjacent trail) rather than deleting Phase 1 code outside
+ * this fix's scope.
  */
-async function logout(userId) {
+async function invalidateAllTokensForUser(userId) {
   const tokenVersion = crypto.randomBytes(16).toString('hex');
 
   await User.findByIdAndUpdate(
     userId,
     {
       $push: { invalidated_token_versions: tokenVersion },
+      $set: { tokens_invalidated_at: new Date() },
     },
   );
 
+  return { success: true };
+}
+
+/**
+ * Logout: invalidate all of this user's currently-issued tokens
+ * immediately (see invalidateAllTokensForUser above).
+ */
+async function logout(userId) {
+  await invalidateAllTokensForUser(userId);
   return { success: true, message: 'Logged out successfully' };
+}
+
+/**
+ * Look up the owner User record by owner_id (the shared, non-ObjectId
+ * ownership-scoping key — see auth.model.js). Exists so other modules
+ * (Phase 7's admin.service, specifically) can resolve "which User account
+ * is this owner_id" through a service call rather than importing
+ * auth.repository/auth.model directly, per CLAUDE.md Section 7.2 — same
+ * reasoning as getUserById above.
+ */
+async function getUserByOwnerId(ownerId) {
+  return authRepository.findUserByOwnerId(ownerId);
+}
+
+/**
+ * Phase 7 addition: every owner account, any status, paginated — see
+ * auth.repository.findUsersByRoleAnyStatus's comment. Exposed as a
+ * service function so admin.service never imports auth.model/
+ * auth.repository directly (CLAUDE.md Section 7.2).
+ */
+async function listOwners({ skip = 0, limit = 20 } = {}) {
+  const [owners, total] = await Promise.all([
+    authRepository.findUsersByRoleAnyStatus(ROLES.OWNER, { skip, limit }),
+    authRepository.countUsersByRoleAnyStatus(ROLES.OWNER),
+  ]);
+  return { owners, total };
+}
+
+/**
+ * Set a User's status (active/suspended/deleted) directly — used by
+ * Phase 7's admin.service.suspendOwner to lock the owner's account out of
+ * login (loginOwner already rejects non-active users) in addition to the
+ * subscription-status-driven booking guard clause and the real-time
+ * session-invalidation check in auth.middleware.verifyToken.
+ */
+async function setUserStatus(userId, status) {
+  if (!['active', 'suspended', 'deleted'].includes(status)) {
+    throw new Error(`Invalid status: "${status}"`);
+  }
+  return authRepository.updateUser(userId, { status });
 }
 
 /**
@@ -328,14 +387,8 @@ async function initiatePasswordReset(email) {
     return { success: true, message: 'If email exists, reset link sent' };
   }
 
-  // Invalidate all refresh tokens (forces re-login on all devices)
-  const tokenVersion = crypto.randomBytes(16).toString('hex');
-  await User.findByIdAndUpdate(
-    user._id,
-    {
-      $push: { invalidated_token_versions: tokenVersion },
-    },
-  );
+  // Invalidate all currently-issued tokens (forces re-login on all devices)
+  await invalidateAllTokensForUser(user._id);
 
   // TODO: In production, generate a reset token and email it
   // For now, just confirm invalidation
@@ -421,6 +474,10 @@ module.exports = {
   issueTokens,
   verifyToken,
   getUserById,
+  getUserByOwnerId,
+  listOwners,
+  setUserStatus,
+  invalidateAllTokensForUser,
   registerStudent,
   loginStudent,
   loginOwner,

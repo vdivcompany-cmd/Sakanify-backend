@@ -27,6 +27,27 @@ function countByOwner(ownerId) {
   return Building.countDocuments({ owner_id: ownerId });
 }
 
+// Phase 7 addition (Docs/phase-7-admin.md, implementation step 7):
+// platform-wide "total active buildings" metric. Every building record in
+// this system is a live, active listing — there is no soft-delete/
+// inactive flag on Building (deleteBuilding hard-deletes, and only once
+// empty of apartments, see building.service.deleteBuilding) — so a total
+// count IS the active-buildings count. Flagged as a technical decision in
+// the Phase 7 report: if a future phase introduces a building-level
+// active/inactive toggle, this should be revisited to filter on it.
+function countAll() {
+  return Building.countDocuments({});
+}
+
+// Platform-wide, unpaginated-by-owner read for Phase 7's admin
+// owners/buildings table (mirrors subscription.repository.findByOwnerIds).
+function countByOwnerIds(ownerIds) {
+  return Building.aggregate([
+    { $match: { owner_id: { $in: ownerIds } } },
+    { $group: { _id: '$owner_id', count: { $sum: 1 } } },
+  ]);
+}
+
 function updateById(buildingId, updates) {
   return Building.findByIdAndUpdate(buildingId, { $set: updates }, { new: true, runValidators: true });
 }
@@ -40,6 +61,8 @@ module.exports = {
   findById,
   findByOwner,
   countByOwner,
+  countAll,
+  countByOwnerIds,
   updateById,
   deleteById,
 };

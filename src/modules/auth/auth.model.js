@@ -69,6 +69,31 @@ const userSchema = new mongoose.Schema(
       default: [],
     },
 
+    // --- Real token-invalidation cutoff (Phase 7 fix) ---
+    // Every access/refresh token carries a `jti` and a standard JWT `iat`
+    // (issued-at) claim. Any token whose `iat` is at or before this
+    // timestamp is treated as invalidated by auth.middleware.verifyToken,
+    // regardless of whether it's still within its normal expiry window.
+    //
+    // This field was added because `invalidated_token_versions` above
+    // (Phase 1) was write-only: logout()/initiatePasswordReset() pushed a
+    // random string into that array, but nothing in the codebase ever
+    // read it back or compared it against an incoming token — so logout
+    // and password-reset never actually revoked an already-issued access
+    // token, only prevented reuse of the specific refresh token string
+    // that had already expired/rotated anyway. Discovered while wiring
+    // Phase 7's suspend-must-really-invalidate-sessions requirement (see
+    // admin.service.suspendOwner) and reusing what was assumed to be a
+    // working Phase 1 mechanism. Flagged as a pre-existing defect fix in
+    // the Phase 7 report per CLAUDE.md Section 7.3a/7.4 — this is a
+    // genuine behavior change for logout()/initiatePasswordReset() too
+    // (their sessions are now actually revoked immediately instead of
+    // only at natural access-token expiry), not just new Phase 7 code.
+    tokens_invalidated_at: {
+      type: Date,
+      default: null,
+    },
+
     // --- Timestamps ---
     created_at: {
       type: Date,

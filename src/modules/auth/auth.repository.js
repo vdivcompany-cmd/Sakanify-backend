@@ -151,6 +151,23 @@ async function countUsersByRole(role) {
   return User.countDocuments({ role, status: 'active' });
 }
 
+/**
+ * Phase 7 addition (Docs/phase-7-admin.md, implementation step 1): every
+ * user of a given role regardless of status — the Super-Admin
+ * owners/buildings table must show suspended owners too, not just active
+ * ones (findUsersByRole/countUsersByRole above default to status:'active'
+ * on purpose for their existing Phase 1 callers, so this is a separate
+ * function rather than changing that default and risking a behavior
+ * change for existing callers).
+ */
+function findUsersByRoleAnyStatus(role, { skip = 0, limit = 20 } = {}) {
+  return User.find({ role }).sort({ created_at: -1 }).skip(skip).limit(limit);
+}
+
+function countUsersByRoleAnyStatus(role) {
+  return User.countDocuments({ role });
+}
+
 module.exports = {
   createUser,
   findUserById,
@@ -158,10 +175,12 @@ module.exports = {
   findUserByPhone,
   findUserByOwnerId,
   findUsersByRole,
+  findUsersByRoleAnyStatus,
   updateUser,
   deleteUser,
   emailExists,
   phoneExists,
   findUserByEmailOrPhone,
   countUsersByRole,
+  countUsersByRoleAnyStatus,
 };
