@@ -7,6 +7,7 @@
  */
 
 const Subscription = require('./subscription.model');
+const { SUBSCRIPTION_STATUS } = require('../../config/constants.config');
 
 function create(data) {
   return Subscription.create(data);
@@ -104,6 +105,17 @@ function resolveExpansionRequest(subscriptionId, expansionRequestId, { status, r
   );
 }
 
+/**
+ * Phase 8 addition (Docs/phase-8-public-site.md): every owner_id whose
+ * subscription is currently ACTIVE — the eligibility gate for the public
+ * building directory ("buildings not subscribed must never appear"). A
+ * single distinct() query regardless of how many owners exist, not one
+ * query per candidate building (CLAUDE.md Section 4.4).
+ */
+function findActiveOwnerIds() {
+  return Subscription.distinct('owner_id', { status: SUBSCRIPTION_STATUS.ACTIVE });
+}
+
 module.exports = {
   create,
   findByOwner,
@@ -114,4 +126,5 @@ module.exports = {
   countWithPendingExpansionRequests,
   findByOwnerIds,
   resolveExpansionRequest,
+  findActiveOwnerIds,
 };

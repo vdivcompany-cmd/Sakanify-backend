@@ -79,6 +79,14 @@ app.use('/api/utilities', require('./modules/utilities/utility-bill.routes'));
 // Phase 7: Super-Admin / V Div Control Center
 app.use('/api/admin', require('./modules/admin/admin.routes'));
 
+// Phase 8: Public Site API — the first fully unauthenticated route
+// surface (subscribed-buildings directory, transparency counters, public
+// lead capture), plus a small authenticated owner-facing slice
+// (list/view their own public leads). Every route in this router applies
+// its own IP-keyed rate limiting on top of this file's global rateLimiter
+// above — see public.routes.js.
+app.use('/api/public', require('./modules/public-site/public.routes'));
+
 // --- 404 fallback for unknown routes ---
 app.use((req, res) => {
   return res.status(404).json({ success: false, message: `Route not found: ${req.method} ${req.originalUrl}` });

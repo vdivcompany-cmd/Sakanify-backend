@@ -11,6 +11,13 @@ const buildingRepository = require('./building.repository');
 const apartmentService = require('../apartments/apartment.service');
 const bedService = require('../beds/bed.service');
 const auditService = require('../audit/audit.service');
+// Phase 8 addition (Docs/phase-8-public-site.md) — the public directory's
+// eligibility gate ("buildings not subscribed must never appear") lives
+// in the subscriptions module; called here rather than querying
+// Subscription directly, per CLAUDE.md Section 7.2. No load-order cycle:
+// subscription.service already requires bed.service, and neither
+// subscription.service nor bed.service requires building.service back.
+const subscriptionService = require('../subscriptions/subscription.service');
 const { AppError } = require('../../middleware/error-handler.middleware');
 
 async function createBuilding(ownerId, data) {
@@ -154,6 +161,91 @@ async function countBuildingsByOwnerIds(ownerIds) {
   return buildingRepository.countByOwnerIds(ownerIds);
 }
 
+/**
+ * Phase 8 addition (Docs/phase-8-public-site.md, implementation steps
+ * 1-2): the public building directory. Only buildings whose owner
+ * currently has an ACTIVE subscription appear at all — resolved via
+ * subscriptionService.getActiveOwnerIds() rather than a direct
+ * Subscription query (CLAUDE.md Section 7.2) — with an optional area
+ * (neighborhood, not distance-based) filter narrowing that same set.
+ * Returns an empty page (not an error) when no owner is currently
+ * actively subscribed, since that's a legitimate, expected state rather
+ * than a failure.
+ */
+async function listPublicBuildings({ area = null, skip = 0, limit = 20 } = {}) {
+  const activeOwnerIds = await subscriptionService.getActiveOwnerIds();
+  if (activeOwnerIds.length === 0) {
+    return { buildings: [], total: 0 };
+  }
+
+  const [buildings, total] = await Promise.all([
+    buildingRepository.findPublic({ ownerIds: activeOwnerIds, area, skip, limit }),
+    buildingRepository.countPublic({ ownerIds: activeOwnerIds, area }),
+  ]);
+
+  return { buildings, total };
+}
+
+/**
+ * Phase 8 addition (implementation step 3): single building detail for
+ * the public directory. Throws a 404 — not a 403 — for a building whose
+ * owner is not (or no longer) actively subscribed, deliberately
+ * indistinguishable from "building doesn't exist" so a delisted/
+ * suspended owner's building id can't be probed/enumerated from outside
+ * (an unauthenticated surface, per this phase's spec, needs this same
+ * existence-leakage discipline CLAUDE.md's data-minimization rules apply
+ * elsewhere).
+ *
+ * Occupancy is collapsed to a single rounded percentage before it's
+ * returned — never bedService.computeOccupancy's raw
+ * available/occupied/pending/maintenance breakdown, since for a small
+ * building that breakdown gets close enough to a per-bed map to defeat
+ * implementation step 6's "no exact per-bed availability map" rule.
+ */
+async function getPublicBuildingDetail(buildingId) {
+  const building = await getBuildingById(buildingId); // 404 if missing at all
+
+  const isPubliclyListed = await subscriptionService.isOwnerPubliclyListed(building.owner_id);
+  if (!isPubliclyListed) {
+    throw new AppError('Building not found', 404);
+  }
+
+  const occupancy = await bedService.computeOccupancy({ buildingId: building._id });
+  const occupancyPercent = occupancy.total > 0
+    ? Math.round((occupancy.occupied / occupancy.total) * 100)
+    : 0;
+
+  return {
+    id: building._id,
+    name: building.name,
+    area: building.area,
+    address: { city: building.address.city, street: building.address.street },
+    occupancy_percent: occupancyPercent,
+    // Reaching this point already proved the owner's subscription is
+    // ACTIVE (see the check above) — "verified" in this phase is
+    // deliberately defined as exactly that, the only real verification
+    // signal that exists in the system today. Flagged as a technical
+    // decision in the Phase 8 report: the phase spec asks for a
+    // "verified badge" without defining what verifies a building, and
+    // there's no separate building-verification workflow anywhere else
+    // in the codebase to reuse.
+    verified: true,
+  };
+}
+
+/**
+ * Phase 8 addition: total buildings currently eligible for the public
+ * directory — the "total verified/subscribed buildings" transparency
+ * counter (implementation step 5). Distinct from countAllBuildings()
+ * above, which counts every building regardless of its owner's
+ * subscription status.
+ */
+async function countPublicBuildings() {
+  const activeOwnerIds = await subscriptionService.getActiveOwnerIds();
+  if (activeOwnerIds.length === 0) return 0;
+  return buildingRepository.countPublic({ ownerIds: activeOwnerIds });
+}
+
 module.exports = {
   createBuilding,
   listBuildingsForOwner,
@@ -165,4 +257,7 @@ module.exports = {
   setUtilitiesIncludedInRent,
   countAllBuildings,
   countBuildingsByOwnerIds,
+  listPublicBuildings,
+  getPublicBuildingDetail,
+  countPublicBuildings,
 };

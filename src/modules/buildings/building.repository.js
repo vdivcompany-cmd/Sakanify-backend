@@ -56,6 +56,33 @@ function deleteById(buildingId) {
   return Building.findByIdAndDelete(buildingId);
 }
 
+/**
+ * Phase 8 addition (Docs/phase-8-public-site.md): the public building
+ * directory query — scoped to only the owner_ids the caller
+ * (building.service.listPublicBuildings) has already resolved as
+ * actively subscribed via subscriptionService.getActiveOwnerIds, with an
+ * optional area (neighborhood, not distance-based per the phase spec)
+ * filter. `.select()` here is a query-level minimization guarantee, not
+ * just a controller-side field strip — owner_id and address.details
+ * never leave the database for this query at all.
+ */
+function findPublic({ ownerIds, area, skip = 0, limit = 20 } = {}) {
+  const filter = { owner_id: { $in: ownerIds } };
+  if (area) filter.area = area;
+
+  return Building.find(filter)
+    .select('name area address.city address.street created_at')
+    .sort({ created_at: -1 })
+    .skip(skip)
+    .limit(limit);
+}
+
+function countPublic({ ownerIds, area } = {}) {
+  const filter = { owner_id: { $in: ownerIds } };
+  if (area) filter.area = area;
+  return Building.countDocuments(filter);
+}
+
 module.exports = {
   create,
   findById,
@@ -65,4 +92,6 @@ module.exports = {
   countByOwnerIds,
   updateById,
   deleteById,
+  findPublic,
+  countPublic,
 };

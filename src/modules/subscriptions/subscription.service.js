@@ -310,6 +310,37 @@ async function getSubscriptionsForOwnerIds(ownerIds) {
   return subscriptionRepository.findByOwnerIds(ownerIds);
 }
 
+/**
+ * Phase 8 addition (Docs/phase-8-public-site.md): which owner_ids are
+ * eligible to appear in the public building directory right now
+ * (subscription.status === ACTIVE). Consumed by
+ * building.service.listPublicBuildings/countPublicBuildings — kept here
+ * rather than a direct Subscription query from the public-site module,
+ * per CLAUDE.md Section 7.2 (cross-module access goes through the owning
+ * module's own service).
+ */
+async function getActiveOwnerIds() {
+  return subscriptionRepository.findActiveOwnerIds();
+}
+
+/**
+ * Phase 8 addition: is this single owner currently eligible for public
+ * listing? Used by building.service.getPublicBuildingDetail (single
+ * building lookup) and public-lead.service.createLead (reject a lead
+ * submitted against a bed whose owner isn't actively subscribed) without
+ * either caller needing to know how "actively subscribed" is defined —
+ * that stays a subscriptions-module concern. Deliberately distinct from
+ * canAcceptNewRequests() above: that function treats "no subscription
+ * provisioned yet" as accepting (true), which is the right default for
+ * the booking engine's request-creation guard, but wrong for public
+ * listing eligibility — an owner with no subscription at all must never
+ * appear in the public directory, so this returns false in that case.
+ */
+async function isOwnerPubliclyListed(ownerId) {
+  const subscription = await subscriptionRepository.findByOwner(ownerId);
+  return Boolean(subscription && subscription.status === SUBSCRIPTION_STATUS.ACTIVE);
+}
+
 module.exports = {
   createSubscription,
   getSubscriptionForOwner,
@@ -322,5 +353,7 @@ module.exports = {
   listPendingExpansionRequests,
   approveExpansionRequest,
   rejectExpansionRequest,
+  getActiveOwnerIds,
+  isOwnerPubliclyListed,
   USAGE_WARNING_THRESHOLD,
 };

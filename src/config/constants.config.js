@@ -120,6 +120,23 @@ const UTILITY_BILL_TYPE = Object.freeze({
   GAS: 'gas',
 });
 
+// --- Public lead status (Phase 8 — anonymous public-site interest capture) ---
+// NEW        -> just submitted, owner hasn't reviewed it yet
+// CONTACTED  -> owner has reached out to the interested visitor
+// DISMISSED  -> owner marked it not worth pursuing (spam, duplicate, etc.)
+// Deliberately a SEPARATE status vocabulary from REQUEST_STATUS — a
+// PublicLead is never a Request and must never be confused with one (see
+// Docs/phase-8-public-site.md's "Critical Design Decision — Public Leads
+// Are NOT Requests"): an anonymous, unverified visitor's expression of
+// interest carries none of the guarantees (KYC'd student, atomic bed
+// lock) a real Request does, so it cannot share a status enum that
+// implies "pending owner review of a real booking."
+const PUBLIC_LEAD_STATUS = Object.freeze({
+  NEW: 'new',
+  CONTACTED: 'contacted',
+  DISMISSED: 'dismissed',
+});
+
 module.exports = {
   ROLES,
   BED_STATUS,
@@ -130,4 +147,5 @@ module.exports = {
   SUBSCRIPTION_STATUS,
   EXPANSION_REQUEST_STATUS,
   UTILITY_BILL_TYPE,
+  PUBLIC_LEAD_STATUS,
 };
