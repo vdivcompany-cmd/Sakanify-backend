@@ -6,7 +6,7 @@ Based on `remediation-pass-2-mfa.md` (fix-authorized implementation of SEC-002 �
 
 **Date:** 2026-08-02
 
-**Status: code-complete, statically verified, and unit-tested where the sandbox allows. The CI-breaking otplib/Jest ESM defect reported after this pass's first push has been root-caused and fixed — see "CI-Investigation Follow-Up" below. NOT YET re-verified by a real GitHub Actions run since that fix. Do not treat this as fully confirmed until a real CI run's exact pass/fail counts (all 15 suites, not just the 4 that passed before) are pasted back in, per the standing project rule.**
+**Status: FULLY VERIFIED via real GitHub Actions. The CI-breaking otplib/Jest ESM defect reported after this pass's first push was root-caused and fixed (see "CI-Investigation Follow-Up" below), and the fix has now been confirmed by a real CI run — see "Real CI Confirmation (Post-Fix)" at the end of that section.**
 
 ## Scope (as authorized)
 
@@ -181,9 +181,25 @@ Per the investigation's stated preference order, a documented Node-specific pres
 - Direct-`node` re-execution (not jest, for the same tool-call-time reasons documented earlier in this report) of the updated MFA logic: **13/13 real assertions passed** across two verification scripts — a valid RFC 4648 Base32 secret is produced (`/^[A-Z2-7]+$/`), a real TOTP code generated via the new `@otplib/totp` + Node-crypto + custom-Base32 chain is independently verified as valid by `verifyTotpCode`, a wrong code is correctly rejected, and the same valid code verifies successfully on a second check (confirming standard non-single-use TOTP behavior, as expected — single-use enforcement applies only to backup codes, not TOTP codes).
 - **Jest itself still could not complete within this sandbox's 45-second tool-call cap** for `tests/unit/mfa.service.test.js`, even after this fix — repeated attempts timed out with no output captured. This is consistent with, and does not change, the pre-existing constraint already documented earlier in this report (jest's own per-file bootstrap overhead stacked on mongoose's ~35s+ cold-require cost on this sandbox's mounted drive) — it is unrelated to the ESM defect just fixed, which was a *require-time crash*, not a *slow require*. The app-boot check above is the strongest evidence available from within this sandbox that the crash itself is gone; confirming jest's exact `Tests: X passed, Y total` output requires the real CI run, same as every other suite in this project.
 
-### What was NOT re-verified from within this sandbox
+### What was NOT re-verified from within this sandbox (at the time this section was first written)
 
-The exact `Test Suites: 15 passed, 15 total` / `Tests: N passed, N total` line requested in the investigation — this sandbox cannot run a full Jest suite against any mongoose-touching file within its tool-call time limit, a constraint that predates and is independent of this specific fix (see "Verification Performed" earlier in this report, and prior remediation passes' reports for the same documented limitation). This must come from a real GitHub Actions run.
+The exact `Test Suites: 15 passed, 15 total` / `Tests: N passed, N total` line requested in the investigation — this sandbox cannot run a full Jest suite against any mongoose-touching file within its tool-call time limit, a constraint that predates and is independent of this specific fix (see "Verification Performed" earlier in this report, and prior remediation passes' reports for the same documented limitation). This required a real GitHub Actions run — see below.
+
+### Real CI Confirmation (Post-Fix)
+
+The project owner pushed this fix and ran the real GitHub Actions workflow (`Run Backend Test Suite`, workflow run `30766566856`, job `91546235269`) — screenshot confirms every step succeeded (`Set up job`, `Initialize containers`, `Checkout repository`, `Set up Node.js`, `Install dependencies`, `Wait for MongoDB to be ready`, `Run test suite`, `Run health-check smoke test`, `Post Set up Node.js`, `Post Checkout repository`, `Stop containers`, `Complete job` — all green, run succeeded in 2m 5s total, "Run test suite" step itself took 34s). The real Jest summary output, pasted directly from that run:
+
+```
+Test Suites: 15 passed, 15 total
+Tests:       264 passed, 264 total
+Snapshots:   0 total
+Time:        33.655 s
+Ran all test suites.
+```
+
+**All 15 suites pass, including both new MFA files** (`tests/integration/mfa.test.js` and `tests/unit/mfa.service.test.js`) and every pre-existing suite (zero regression to Phase 1 Owner/Student login or any other module). This is the exact confirmation the investigation asked for: the otplib/Jest ESM `SyntaxError` that took the run from 4/15 to 15/15 passing suites is fully resolved, and the total test count (264) is consistent with the pre-existing suite count plus this pass's ~39 new MFA test cases (22 integration + 17 unit) across the two new files.
+
+This closes out both the original SEC-002 implementation and this CI-investigation follow-up. Per `CLAUDE.md` Section 11.3, this real CI result is what makes the whole pass verified — not the sandbox's own direct-`node` execution evidence, which was always a substitute for, not a replacement of, this confirmation.
 
 ---
 
@@ -195,11 +211,9 @@ Two additional throwaway diagnostic scripts were created during this follow-up i
 
 ## What Still Needs To Happen
 
-1. **Project owner deletes the four stray temp files** noted above (or confirms they're excluded from the commit) — `_boot_diag_tmp.js`, `_mfa_manual_check_tmp.js`, `_boot_diag2_tmp.js`, `_mfa_manual_check2_tmp.js`.
-2. **Project owner runs `push.bat`** — no git command was run by Claude Desktop in this pass or this follow-up, per `CLAUDE.md` Section 11.
-3. **Real GitHub Actions confirmation required** before this pass is "fully verified," per the standing project rule and the precise-honesty standard set in Session 2 of this project: the exact `Test Suites: 15 passed, 15 total` / `Tests: N passed, N total` line from the real CI run, covering every suite (existing + the two new MFA files), not just an overall green checkmark. This is the specific confirmation still outstanding — the previous CI run's 11-suite failure is what triggered this follow-up, and that failure has not yet been re-tested by a real CI run since the fix.
-4. Until that confirmation is provided, this report's status remains **code-complete, root-cause fixed, and directly-executed-verified where the sandbox allows — not yet CI-confirmed.**
+1. **Project owner deletes the four stray temp files** noted above — `_boot_diag_tmp.js`, `_mfa_manual_check_tmp.js`, `_boot_diag2_tmp.js`, `_mfa_manual_check2_tmp.js` — from the repo working directory whenever convenient. They are untracked and were not part of the pushed/verified commit, so they do not block anything; this is routine local cleanup only.
+2. Nothing else. Real CI confirmation (all 15 suites, 264/264 tests) has been received and is recorded above — this pass is closed out.
 
 ## Final Status
 
-**Code-complete, including the CI-investigation follow-up.** All 10 implementation steps and 6 product decisions from `remediation-pass-2-mfa.md` are implemented, statically verified, and (where the sandbox allows) directly executed with passing results. The otplib/Jest ESM `SyntaxError` reported from the first real CI run has been root-caused (an ESM-only transitive dependency of `otplib`'s default plugins, unconditionally required at module-load time) and fixed at the source (switched to the documented Node-native `@otplib/*` building blocks plus a hand-rolled, spec-compliant Base32 codec — not a Jest configuration workaround), with the MFA logic itself untouched. Full-suite jest-level and integration-level verification for the mongoose-touching suites remain blocked by pre-existing, documented sandbox constraints (network-blocked `mongodb-memory-server` binary download; slow mounted-drive I/O exceeding the tool-call time cap when combined with jest's own overhead) — not by any known defect in the implementation. Awaiting a real GitHub Actions run to confirm all 15 suites pass before this pass can be marked fully verified.
+**Fully complete and CI-verified.** All 10 implementation steps and 6 product decisions from `remediation-pass-2-mfa.md` are implemented. The otplib/Jest ESM `SyntaxError` reported from the first real CI run was root-caused (an ESM-only transitive dependency of `otplib`'s default plugins, unconditionally required at module-load time) and fixed at the source (switched to the documented Node-native `@otplib/*` building blocks plus a hand-rolled, spec-compliant RFC 4648 Base32 codec — not a Jest configuration workaround), with the MFA logic itself untouched. A real GitHub Actions run (workflow run `30766566856`) confirms **15/15 suites passed, 264/264 tests passed**, including both new MFA test files and zero regression to any pre-existing suite. This pass is verified and closed.

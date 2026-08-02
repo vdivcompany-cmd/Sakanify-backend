@@ -74,6 +74,21 @@ function loadEnv() {
     );
   }
 
+  // Remediation Pass 3 / SEC-004: same partial-configuration guard as
+  // storage above — one Upstash var without the other is almost certainly
+  // a typo/copy-paste mistake, not an intentional half-setup, so it's
+  // surfaced loudly (but non-fatally, per decision 2) rather than silently
+  // falling back to in-memory without explanation.
+  const redisUrlPresent = Boolean(process.env.UPSTASH_REDIS_REST_URL);
+  const redisTokenPresent = Boolean(process.env.UPSTASH_REDIS_REST_TOKEN);
+  if (redisUrlPresent !== redisTokenPresent) {
+    console.warn(
+      '[env.config] Partial Upstash Redis configuration detected — only one of '
+        + 'UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN is set. Rate limiting will '
+        + 'fall back to the in-memory store until both are set.',
+    );
+  }
+
   return {
     nodeEnv: process.env.NODE_ENV || 'development',
     port: Number(process.env.PORT) || 5000,
@@ -118,6 +133,20 @@ function loadEnv() {
     rateLimit: {
       windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
       max: Number(process.env.RATE_LIMIT_MAX) || 100,
+    },
+    // Remediation Pass 3 / SEC-004: Redis-backed rate-limit store (Upstash
+    // REST client). Deliberately NOT in REQUIRED_VARS — product decision 2
+    // is that both of these are optional, and every rate limiter must
+    // transparently fall back to the existing in-memory store when they're
+    // absent (local dev, CI, or before Upstash is provisioned). Both must
+    // be present together to be considered "configured" — the same
+    // present-as-a-group-or-not-at-all pattern already used for `storage`
+    // above, for the same reason (a half-configured client is worse than
+    // an unconfigured one: it would look enabled but fail every request).
+    redis: {
+      isConfigured: Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN),
+      url: process.env.UPSTASH_REDIS_REST_URL || null,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN || null,
     },
     // Security-hardening-pass addition (Aug 2026, hardening-audit Category
     // 6): CORS must default to allowing NO cross-origin browser requests

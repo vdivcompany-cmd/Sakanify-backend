@@ -8,6 +8,7 @@
 
 const rateLimit = require('express-rate-limit');
 const { error } = require('../shared/utils/response.util');
+const { createRateLimitStore } = require('../shared/utils/redis-rate-limit-store');
 
 const WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000; // 15 min
 const MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX) || 100;
@@ -17,6 +18,12 @@ const rateLimiter = rateLimit({
   max: MAX_REQUESTS,
   standardHeaders: true,
   legacyHeaders: false,
+  // Remediation Pass 3 / SEC-004: previously had no explicit `store`,
+  // meaning express-rate-limit silently constructed its own internal
+  // MemoryStore. Now goes through the same shared factory as every other
+  // limiter, for consistency (and so this global limiter also becomes
+  // Redis-backed once Upstash is configured, not just the per-route ones).
+  store: createRateLimitStore('global:'),
   // Regression fix (post-hardening-pass): this global limiter's scope/
   // mounting order in app.entry.js never changed — it was already applied
   // to every route, before and after the hardening pass. What changed is

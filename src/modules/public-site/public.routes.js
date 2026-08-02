@@ -27,15 +27,18 @@
 
 const express = require('express');
 const rateLimit = require('express-rate-limit');
-const { MemoryStore } = require('express-rate-limit');
+const { createRateLimitStore } = require('../../shared/utils/redis-rate-limit-store');
 const publicController = require('./public.controller');
 const { verifyToken, requireRole } = require('../../middleware/auth.middleware');
 const { ROLES } = require('../../config/constants.config');
 
 const router = express.Router();
 
-const browsingStore = new MemoryStore();
-const leadStore = new MemoryStore();
+// Remediation Pass 3 / SEC-004: same shared, Redis-backed (or
+// automatically in-memory-fallback) store factory as every other limiter
+// in the backend — see redis-rate-limit-store.js's header comment.
+const browsingStore = createRateLimitStore('public-browse:');
+const leadStore = createRateLimitStore('public-lead:');
 
 // Browsing (listing/detail/counters): generous — this traffic is
 // expected to be the bulk of this module's load and has no write

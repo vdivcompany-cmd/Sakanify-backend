@@ -24,15 +24,20 @@
 
 const express = require('express');
 const rateLimit = require('express-rate-limit');
-const { MemoryStore } = require('express-rate-limit');
+const { createRateLimitStore } = require('../../shared/utils/redis-rate-limit-store');
 const mfaController = require('./mfa.controller');
 const { verifyMfaSetupAccess, verifyMfaPendingAccess } = require('../../middleware/auth.middleware');
 
 const router = express.Router();
 
-const setupStore = new MemoryStore();
-const verifySetupStore = new MemoryStore();
-const verifyLoginStore = new MemoryStore();
+// Remediation Pass 3 / SEC-004: stores now come from the shared
+// Redis-backed factory (falls back to the same MemoryStore as before when
+// Upstash isn't configured — see redis-rate-limit-store.js's header
+// comment). `store.resetAll()` below continues to work unchanged in tests,
+// since the fallback path returns a real MemoryStore.
+const setupStore = createRateLimitStore('mfa-setup:');
+const verifySetupStore = createRateLimitStore('mfa-verify-setup:');
+const verifyLoginStore = createRateLimitStore('mfa-verify-login:');
 
 // Generous — requires a valid setup/access token already (i.e. a correct
 // password was already required upstream); not a brute-forceable code path

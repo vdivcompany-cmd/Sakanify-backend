@@ -10,7 +10,7 @@
 
 const express = require('express');
 const rateLimit = require('express-rate-limit');
-const { MemoryStore } = require('express-rate-limit');
+const { createRateLimitStore } = require('../../shared/utils/redis-rate-limit-store');
 const authController = require('./auth.controller');
 const { verifyToken, requireRole } = require('../../middleware/auth.middleware');
 const { ROLES } = require('../../config/constants.config');
@@ -19,11 +19,15 @@ const router = express.Router();
 
 // --- Stricter rate limiting for auth endpoints ---
 //
-// Each limiter gets its own explicit MemoryStore instance (rather than
-// letting express-rate-limit create an implicit default one) purely so
-// tests can reset it between test suites via store.resetAll(). This does
-// NOT change limiter behavior in production — same max/windowMs as before,
-// same in-memory storage. See tests/integration/*.test.js for usage.
+// Remediation Pass 3 / SEC-004: every store below now comes from the
+// shared Redis-backed factory (redis-rate-limit-store.js) instead of
+// constructing its own MemoryStore directly — this is what makes rate
+// limiting stay effective across more than one server instance once
+// Upstash credentials are configured. When they're not (local dev, CI,
+// or any environment before Upstash is provisioned), the factory
+// transparently falls back to the exact same MemoryStore class every
+// limiter used before this pass, so `store.resetAll()` (see below) keeps
+// working with zero changes to any test file.
 //
 // NOTE: The rate-limit key is the client IP by default. In a real deployment
 // with many distinct users behind different IPs, that's fine. But every
@@ -32,10 +36,10 @@ const router = express.Router();
 // first 3 OTP requests in an entire test run would exhaust the limiter for
 // every test after it — that was the root cause of the CI failures we saw.
 
-const otpStore = new MemoryStore();
-const loginStore = new MemoryStore();
-const passwordResetStore = new MemoryStore();
-const refreshTokenStore = new MemoryStore();
+const otpStore = createRateLimitStore('otp:');
+const loginStore = createRateLimitStore('login:');
+const passwordResetStore = createRateLimitStore('password-reset:');
+const refreshTokenStore = createRateLimitStore('refresh-token:');
 
 // OTP requests: max 3 per 5 minutes to prevent spam
 const otpLimiter = rateLimit({
