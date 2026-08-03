@@ -63,12 +63,39 @@ function findExpiredPending(limit) {
 }
 
 /**
+ * Phase 9 addition (Part A, implementation step 5): on a successful
+ * confirm, bulk-mark every OTHER pending request for the same bed as
+ * BED_TAKEN — one write regardless of how many pending requests exist for
+ * that bed (CLAUDE.md Section 4.4, no N+1 loop-and-update-per-document).
+ * Excludes the just-confirmed request itself via `$ne`.
+ */
+function markSiblingsBedTaken(bedId, excludeRequestId) {
+  return Request.updateMany(
+    { bed: bedId, status: REQUEST_STATUS.PENDING, _id: { $ne: excludeRequestId } },
+    { $set: { status: REQUEST_STATUS.BED_TAKEN, responded_at: new Date(), updated_at: new Date() } },
+  );
+}
+
+/**
  * Does a PENDING request exist linking this student to this owner? Used
  * by the owner-facing KYC-view isolation check (implementation step 10) —
  * one half of "connected through an active or pending request/rental".
  */
 function existsPendingForStudentAndOwner(studentId, ownerId) {
   return Request.exists({ student: studentId, owner_id: ownerId, status: REQUEST_STATUS.PENDING });
+}
+
+/**
+ * Phase 9 addition (Part C, Product Decision 2): does ANY request — any
+ * status, past or present — link this student to this owner? Deliberately
+ * broader than existsPendingForStudentAndOwner above (which only counts
+ * PENDING relationships, for the Phase 4 KYC-view isolation check) — the
+ * behavior-report gate is about "did this owner ever legitimately house or
+ * consider housing this student," which a rejected/expired/bed_taken
+ * request already establishes just as validly as a pending one.
+ */
+function existsAnyForStudentAndOwner(studentId, ownerId) {
+  return Request.exists({ student: studentId, owner_id: ownerId });
 }
 
 // Phase 7 addition (Docs/phase-7-admin.md, implementation step 7):
@@ -92,6 +119,8 @@ module.exports = {
   countMineForStudent,
   updateById,
   findExpiredPending,
+  markSiblingsBedTaken,
   existsPendingForStudentAndOwner,
+  existsAnyForStudentAndOwner,
   aggregateStatusCounts,
 };

@@ -59,12 +59,21 @@ const PAYMENT_STATUS = Object.freeze({
 // REJECTED -> owner declined; see REQUEST_REJECTION_REASON below
 // EXPIRED  -> owner never responded within the timeout window (request-expiry.job)
 // CANCELLED -> student withdrew the request before the owner responded
+// Phase 9 addition (Docs/phase-9-booking-behavior-bulk-registration.md,
+// Part A, Product Decision 2): when one pending request/viewing-booking
+// for a bed is confirmed, every OTHER pending request for that same bed
+// is automatically transitioned here — kept for the record (never
+// deleted) so a student can see, next time they check their own
+// requests, that the bed went to someone else. Deliberately a distinct
+// terminal state from REJECTED (no owner actively declined this specific
+// student) and from EXPIRED (nothing timed out — someone else won).
 const REQUEST_STATUS = Object.freeze({
   PENDING: 'pending',
   APPROVED: 'approved',
   REJECTED: 'rejected',
   EXPIRED: 'expired',
   CANCELLED: 'cancelled',
+  BED_TAKEN: 'bed_taken',
 });
 
 // --- Structured rejection reasons (Phase 4) ---
@@ -137,6 +146,23 @@ const PUBLIC_LEAD_STATUS = Object.freeze({
   DISMISSED: 'dismissed',
 });
 
+// --- Behavior report severity (Phase 9, Part C) ---
+const BEHAVIOR_REPORT_SEVERITY = Object.freeze({
+  MINOR: 'minor',
+  MODERATE: 'moderate',
+  SEVERE: 'severe',
+});
+
+// --- Bulk self-registration submission status (Phase 9, Part D) ---
+// PENDING  -> awaiting owner review, no Rental exists yet
+// ASSIGNED -> owner confirmed via "Assign to Bed" — a Rental now exists
+// REJECTED -> owner declined this submission (e.g. fabricated data)
+const BULK_SUBMISSION_STATUS = Object.freeze({
+  PENDING: 'pending',
+  ASSIGNED: 'assigned',
+  REJECTED: 'rejected',
+});
+
 module.exports = {
   ROLES,
   BED_STATUS,
@@ -148,4 +174,6 @@ module.exports = {
   EXPANSION_REQUEST_STATUS,
   UTILITY_BILL_TYPE,
   PUBLIC_LEAD_STATUS,
+  BEHAVIOR_REPORT_SEVERITY,
+  BULK_SUBMISSION_STATUS,
 };

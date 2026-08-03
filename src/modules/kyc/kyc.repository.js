@@ -34,6 +34,19 @@ function findById(kycId) {
   return Kyc.findById(kycId);
 }
 
+/**
+ * Phase 9 addition (Part C, "Search by National ID"): resolve a raw
+ * National ID number to its owning student's Kyc record. Opts into the
+ * sensitive `national_id_number` field explicitly (same pattern as
+ * findByStudentIdWithSensitiveFields) since this IS the field being
+ * queried against — the unique index added this phase
+ * (kyc.model.js) is what makes this a safe, indexed equality lookup
+ * rather than a collection scan.
+ */
+function findByNationalIdNumber(nationalIdNumber) {
+  return Kyc.findOne({ national_id_number: nationalIdNumber }).select('+national_id_number');
+}
+
 function create(data) {
   return Kyc.create(data);
 }
@@ -63,6 +76,7 @@ module.exports = {
   findByStudentIdWithSensitiveFields,
   findByStudentIds,
   findById,
+  findByNationalIdNumber,
   create,
   updateByStudentId,
   updateStatusById,

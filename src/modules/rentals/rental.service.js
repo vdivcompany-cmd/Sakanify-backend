@@ -24,47 +24,97 @@ const { BED_STATUS, RENTAL_STATUS } = require('../../config/constants.config');
 const { AppError } = require('../../middleware/error-handler.middleware');
 
 /**
- * Called by request.service.confirmRequest, immediately after the bed has
- * already been atomically transitioned pending -> occupied. This function
- * does not touch bed status at all — that guarantee lives entirely in
- * request.service/bed.service, per CLAUDE.md Section 7.2 (this stays
- * focused on rental creation only).
+ * THE shared guard used by EVERY code path that creates a Rental
+ * (Docs/phase-9-booking-behavior-bulk-registration.md, Part A: "Build one
+ * function ... call it from every single code path that creates a
+ * Rental"): the viewing-booking/request confirm action
+ * (createRentalFromRequest below), Part D's assign-to-bed action, and
+ * Part D's manual-entry-direct-to-rental action.
  *
- * `monthlyRent` (Phase 5 addition) is the bed's monthly_rent at this exact
- * moment, passed in by request.service.confirmRequest from the bed it just
- * transitioned — snapshotted onto rental.monthly_rent so it never drifts if
- * the bed's listing price changes later (see rental.model.js).
+ * Does not touch bed status at all — that guarantee lives entirely in
+ * whichever caller already atomically transitioned the bed to occupied
+ * before calling this (request.service.confirmRequest,
+ * bulk-registration.service.assignToBed/manualEntry), per CLAUDE.md
+ * Section 7.2 (this stays focused on rental creation + the one-active-
+ * rental-per-student database guarantee only).
  *
- * After the rental itself is created, this also generates the rental's
- * first Payment record (Docs/phase-5-cash-payment.md step 2) via
- * payment.service, so a confirmed rental always has its first billing
- * period's payment waiting from the moment it goes active — never through
- * direct DB access into the Payments collection (CLAUDE.md Section 7.2).
+ * The one-active-rental-per-student invariant (Part A, Product Decision 7)
+ * is enforced by rental.model.js's partial unique index on
+ * {student, holds_platform_slot: true} — NOT by a read-then-write
+ * application check, which would have a real race-condition window under
+ * concurrent confirmations. A duplicate-key error from that index is
+ * caught here and converted into a single, clean, clearly-worded 409 via
+ * the Section 3a error classifier, rather than leaking a raw MongoDB
+ * error — this is the ONE place that translation happens, so every caller
+ * gets the same message for free.
+ *
+ * `requestId` is null for Part D's manual-entry/assign-to-bed paths (see
+ * rental.model.js's `request` field comment on why it's now optional).
  */
-async function createRentalFromRequest(request, actorUserId, monthlyRent) {
-  const rental = await rentalRepository.create({
-    student: request.student,
-    bed: request.bed,
-    building: request.building,
-    owner_id: request.owner_id,
-    request: request._id,
-    status: RENTAL_STATUS.ACTIVE,
-    confirmed_date: new Date(),
-    move_in_date: request.move_in_date || null,
-    monthly_rent: monthlyRent || 0,
-  });
+async function createRental({
+  studentId, bedId, buildingId, ownerId, requestId = null, monthlyRent, moveInDate = null, actorUserId,
+}) {
+  let rental;
+  try {
+    rental = await rentalRepository.create({
+      student: studentId,
+      bed: bedId,
+      building: buildingId,
+      owner_id: ownerId,
+      request: requestId,
+      status: RENTAL_STATUS.ACTIVE,
+      confirmed_date: new Date(),
+      move_in_date: moveInDate,
+      monthly_rent: monthlyRent || 0,
+      holds_platform_slot: true,
+    });
+  } catch (err) {
+    if (err.code === 11000 && err.keyPattern && err.keyPattern.student) {
+      throw new AppError(
+        'This student already has an active rental — a student cannot hold two active rentals at once.',
+        409,
+      );
+    }
+    throw err;
+  }
 
   await auditService.writeAuditLog({
     actor: actorUserId,
     action: 'rental_created',
     entityType: 'Rental',
     entityId: rental._id,
-    afterState: { status: RENTAL_STATUS.ACTIVE, bed: request.bed.toString() },
+    afterState: { status: RENTAL_STATUS.ACTIVE, bed: bedId.toString() },
   });
 
   await paymentService.createInitialPaymentForRental(rental, actorUserId);
 
   return rental;
+}
+
+/**
+ * Thin wrapper over createRental() for the request/viewing-booking confirm
+ * path — kept as its own named function since it's the highest-traffic
+ * caller and request.service.confirmRequest already has a `request`
+ * document in hand. Called immediately after the bed has already been
+ * atomically transitioned available -> occupied (see request.service's
+ * confirmRequest, Phase 9's Part A redesign).
+ *
+ * `monthlyRent` (Phase 5 addition) is the bed's monthly_rent at this exact
+ * moment, passed in by the caller from the bed it just transitioned —
+ * snapshotted onto rental.monthly_rent so it never drifts if the bed's
+ * listing price changes later (see rental.model.js).
+ */
+async function createRentalFromRequest(request, actorUserId, monthlyRent) {
+  return createRental({
+    studentId: request.student,
+    bedId: request.bed,
+    buildingId: request.building,
+    ownerId: request.owner_id,
+    requestId: request._id,
+    monthlyRent,
+    moveInDate: request.move_in_date || null,
+    actorUserId,
+  });
 }
 
 async function getRentalById(rentalId) {
@@ -134,6 +184,10 @@ async function finalizeMoveOut(rentalId, actorUserId) {
   const updated = await rentalRepository.updateById(rentalId, {
     status: RENTAL_STATUS.CLOSED,
     closed_at: new Date(),
+    // Phase 9: release the one-active-rental-per-student database slot
+    // (see rental.model.js's holds_platform_slot comment) — from this
+    // point on the student is free to be assigned a new bed elsewhere.
+    holds_platform_slot: false,
   });
 
   await auditService.writeAuditLog({
@@ -155,6 +209,16 @@ async function finalizeMoveOut(rentalId, actorUserId) {
  */
 async function hasActiveRelationshipWithOwner(studentId, ownerId) {
   return Boolean(await rentalRepository.existsActiveOrVacatingForStudentAndOwner(studentId, ownerId));
+}
+
+/**
+ * Phase 9 addition (Part C, Product Decision 2): does this owner have any
+ * rental-based relationship (any status, including closed) with this
+ * student? The other half of behaviorReportService's relationship gate —
+ * see requestService.hasAnyRelationshipWithOwner for the first half.
+ */
+async function hasAnyRelationshipWithOwner(studentId, ownerId) {
+  return Boolean(await rentalRepository.existsAnyForStudentAndOwner(studentId, ownerId));
 }
 
 /**
@@ -203,12 +267,14 @@ async function listActiveOrVacatingRentalsForBeds(bedIds) {
 }
 
 module.exports = {
+  createRental,
   createRentalFromRequest,
   getRentalById,
   listRentalsForOwner,
   markVacating,
   finalizeMoveOut,
   hasActiveRelationshipWithOwner,
+  hasAnyRelationshipWithOwner,
   bedHasActiveRental,
   anyBedHasActiveRental,
   listActiveOrVacatingRentalsForBeds,

@@ -154,6 +154,18 @@ async function updateVerificationStatus(kycId, newStatus, reviewerUserId) {
 }
 
 /**
+ * Phase 9 addition (Part C, "Search by National ID"): resolve a raw
+ * National ID number to the student it belongs to. Returns null (not a
+ * throw) if no student has that National ID on file — behaviorReportService
+ * decides how to respond to "not found" vs. "found but not a qualifying
+ * relationship" with two different messages, so this stays a pure lookup.
+ */
+async function findStudentIdByNationalId(nationalIdNumber) {
+  const kyc = await kycRepository.findByNationalIdNumber(nationalIdNumber);
+  return kyc ? kyc.student : null;
+}
+
+/**
  * Phase 7 addition: total verified students across the whole platform —
  * see kyc.repository.countByStatus's comment.
  */
@@ -167,5 +179,6 @@ module.exports = {
   getKycMapForStudents,
   resubmitKyc,
   updateVerificationStatus,
+  findStudentIdByNationalId,
   countVerifiedStudents,
 };

@@ -142,6 +142,28 @@ async function getFullProfilesWithKycForIds(studentIds) {
   return result;
 }
 
+/**
+ * Phase 9 addition (Part A/B, public bed-picker / roommate-college
+ * endpoint): batched student-id -> college lookup, minimal-exposure by
+ * construction (returns only `college`, never the full student document)
+ * — used to project an occupied bed's `current_occupant_college` without
+ * ever risking leaking name/photo/phone through this specific path
+ * (Part B, Product Decision: "only that occupant's college — nothing
+ * else"). One query regardless of how many occupied beds exist
+ * (CLAUDE.md Section 4.4).
+ */
+async function getCollegesForStudentIds(studentIds) {
+  const uniqueIds = [...new Set(studentIds.map((id) => id.toString()))];
+  if (uniqueIds.length === 0) return new Map();
+
+  const students = await studentRepository.findByIds(uniqueIds);
+  const map = new Map();
+  for (const student of students) {
+    map.set(student._id.toString(), student.college);
+  }
+  return map;
+}
+
 module.exports = {
   registerStudent,
   getMyProfile,
@@ -149,4 +171,5 @@ module.exports = {
   getStudentRecordByUserId,
   getFullProfileWithKyc,
   getFullProfilesWithKycForIds,
+  getCollegesForStudentIds,
 };

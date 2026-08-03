@@ -114,6 +114,12 @@ app.use('/api/utilities', require('./modules/utilities/utility-bill.routes'));
 // Phase 7: Super-Admin / V Div Control Center
 app.use('/api/admin', require('./modules/admin/admin.routes'));
 
+// Phase 9, Part C: cross-owner student behavior reports (relationship-gated)
+app.use('/api/behavior-reports', require('./modules/behavior-reports/behavior-report.routes'));
+
+// Phase 9, Part D: secure bulk tenant registration links
+app.use('/api/bulk-registration', require('./modules/bulk-registration/bulk-registration.routes'));
+
 // Phase 8: Public Site API — the first fully unauthenticated route
 // surface (subscribed-buildings directory, transparency counters, public
 // lead capture), plus a small authenticated owner-facing slice

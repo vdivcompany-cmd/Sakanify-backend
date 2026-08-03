@@ -66,6 +66,18 @@ function existsActiveOrVacatingForStudentAndOwner(studentId, ownerId) {
 }
 
 /**
+ * Phase 9 addition (Part C, Product Decision 2): does ANY rental — any
+ * status, including already-closed tenancies — link this student to this
+ * owner? Broader than existsActiveOrVacatingForStudentAndOwner above
+ * (Phase 4's KYC-view isolation check, which only counts a live tenancy) —
+ * a closed/past rental is exactly the kind of history the behavior-report
+ * feature exists to surface, so it must still qualify an owner to search.
+ */
+function existsAnyForStudentAndOwner(studentId, ownerId) {
+  return Rental.exists({ student: studentId, owner_id: ownerId });
+}
+
+/**
  * Does an active or vacating rental exist for this specific bed? Backs
  * the Phase 3 deletion retrofit's bed-level check — the authoritative
  * signal for "can this bed be deleted" is now this, not just bed.status
@@ -103,6 +115,7 @@ module.exports = {
   countByOwner,
   updateById,
   existsActiveOrVacatingForStudentAndOwner,
+  existsAnyForStudentAndOwner,
   existsActiveOrVacatingForBed,
   existsActiveOrVacatingForBeds,
   findActiveOrVacatingForBeds,

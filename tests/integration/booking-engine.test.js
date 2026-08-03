@@ -150,20 +150,22 @@ beforeEach(async () => {
 
 describe('Booking Engine (Requests & Rentals) — Integration Tests', () => {
   // ========================================================================
-  // THE critical deliverable: atomic bed-locking under concurrency
+  // Phase 9, Part A REDESIGN — the atomic bed-locking guarantee moved from
+  // request-creation to confirm-time. Every test below in this describe
+  // block was REWRITTEN (not just re-passed) from Phase 4's original
+  // version, per the project owner's explicit instruction — the exact
+  // behavior under test (a bed locks the instant a request is created) no
+  // longer exists on purpose. See Docs/reports/phase-9-report.md for the
+  // full list of changed tests and the reasoning.
   // ========================================================================
-  describe('Atomic Bed-Locking Under Concurrency (CLAUDE.md Section 4.5/6.2)', () => {
-    it('should allow exactly ONE of many near-simultaneous requests for the same bed to succeed, and reject all the rest with 409', async () => {
+  describe('Non-Exclusive Creation, THEN Atomic Confirm-Time Locking (Phase 9, Part A)', () => {
+    it('REWRITTEN (was: "atomic bed-locking at creation"): many near-simultaneous requests for the same bed at CREATION time should ALL succeed — creation is non-exclusive by design', async () => {
       const { ownerId } = await createOwner();
       const { bed } = await createBedFixture(ownerId);
 
       const CONCURRENT_STUDENTS = 10;
       const students = await Promise.all(Array.from({ length: CONCURRENT_STUDENTS }, () => createStudent()));
 
-      // Fire all requests essentially simultaneously — this is the actual
-      // race condition exercise. The atomicity guarantee under test lives
-      // in bed.repository.conditionalUpdateStatus (a single conditional
-      // findOneAndUpdate), not in anything application-level here.
       const responses = await Promise.all(
         students.map(({ token }) =>
           request(app)
@@ -174,41 +176,88 @@ describe('Booking Engine (Requests & Rentals) — Integration Tests', () => {
       );
 
       const succeeded = responses.filter((r) => r.status === 201);
-      const conflicted = responses.filter((r) => r.status === 409);
+      expect(succeeded.length).toBe(CONCURRENT_STUDENTS);
 
+      const requestCount = await RequestModel.countDocuments({ bed: bed._id, status: REQUEST_STATUS.PENDING });
+      expect(requestCount).toBe(CONCURRENT_STUDENTS);
+
+      // Creation must NEVER touch bed status (Part A implementation step 2,
+      // explicit test requirement) — the bed stays available the whole time.
+      const freshBed = await Bed.findById(bed._id);
+      expect(freshBed.status).toBe(BED_STATUS.AVAILABLE);
+    });
+
+    it('NEW — THE critical deliverable (replaces Phase 4\'s creation-time concurrency test): exactly ONE of many pre-existing pending requests for the same bed can win a near-simultaneous CONFIRM race, and the rest are cleanly rejected with 409 (CLAUDE.md Section 4.5/6.2)', async () => {
+      const { ownerId, token: ownerToken } = await createOwner();
+      const { bed } = await createBedFixture(ownerId);
+
+      const CONCURRENT_STUDENTS = 10;
+      const students = await Promise.all(Array.from({ length: CONCURRENT_STUDENTS }, () => createStudent()));
+
+      const createResponses = await Promise.all(
+        students.map(({ token }) =>
+          request(app).post('/api/requests').set('Authorization', `Bearer ${token}`).send({ bed_id: bed._id.toString() }),
+        ),
+      );
+      const requestIds = createResponses.map((r) => r.body.data._id);
+      expect(requestIds.length).toBe(CONCURRENT_STUDENTS);
+
+      // Now race the CONFIRM calls — this is where atomicity actually
+      // lives as of Phase 9.
+      const confirmResponses = await Promise.all(
+        requestIds.map((requestId) =>
+          request(app).post(`/api/requests/${requestId}/confirm`).set('Authorization', `Bearer ${ownerToken}`),
+        ),
+      );
+
+      const succeeded = confirmResponses.filter((r) => r.status === 200);
+      const conflicted = confirmResponses.filter((r) => r.status === 409);
       expect(succeeded.length).toBe(1);
       expect(conflicted.length).toBe(CONCURRENT_STUDENTS - 1);
 
-      // The database must agree: exactly one Request document exists for
-      // this bed, and the bed itself is "pending" (locked), not
-      // "available" or corrupted into some other state.
-      const requestCount = await RequestModel.countDocuments({ bed: bed._id });
-      expect(requestCount).toBe(1);
-
       const freshBed = await Bed.findById(bed._id);
-      expect(freshBed.status).toBe(BED_STATUS.PENDING);
+      expect(freshBed.status).toBe(BED_STATUS.OCCUPIED);
+
+      const rentalCount = await Rental.countDocuments({ bed: bed._id });
+      expect(rentalCount).toBe(1);
+
+      // Every OTHER pending request for this bed must now be bed_taken —
+      // never left dangling as pending, never silently deleted.
+      const bedTakenCount = await RequestModel.countDocuments({ bed: bed._id, status: REQUEST_STATUS.BED_TAKEN });
+      expect(bedTakenCount).toBe(CONCURRENT_STUDENTS - 1);
     });
 
-    it('should reject a second sequential request for a bed that is already pending', async () => {
+    it('NEW: confirming one request auto-marks every other pending request for the same bed as bed_taken (sequential, deterministic version of the race test above)', async () => {
+      const { ownerId, token: ownerToken } = await createOwner();
+      const { bed } = await createBedFixture(ownerId);
+      const { token: winnerToken } = await createStudent();
+      const { token: loserToken } = await createStudent();
+
+      const winnerRes = await request(app).post('/api/requests').set('Authorization', `Bearer ${winnerToken}`).send({ bed_id: bed._id.toString() });
+      const loserRes = await request(app).post('/api/requests').set('Authorization', `Bearer ${loserToken}`).send({ bed_id: bed._id.toString() });
+
+      const confirmRes = await request(app)
+        .post(`/api/requests/${winnerRes.body.data._id}/confirm`)
+        .set('Authorization', `Bearer ${ownerToken}`);
+      expect(confirmRes.status).toBe(200);
+
+      const freshLoser = await RequestModel.findById(loserRes.body.data._id);
+      expect(freshLoser.status).toBe(REQUEST_STATUS.BED_TAKEN);
+    });
+
+    it('NEW: a student cannot hold two pending requests for the SAME bed at once (the new {student, bed} partial unique index)', async () => {
       const { ownerId } = await createOwner();
       const { bed } = await createBedFixture(ownerId);
-      const { token: token1 } = await createStudent();
-      const { token: token2 } = await createStudent();
+      const { token } = await createStudent();
 
-      const first = await request(app)
-        .post('/api/requests')
-        .set('Authorization', `Bearer ${token1}`)
-        .send({ bed_id: bed._id.toString() });
+      const first = await request(app).post('/api/requests').set('Authorization', `Bearer ${token}`).send({ bed_id: bed._id.toString() });
       expect(first.status).toBe(201);
 
-      const second = await request(app)
-        .post('/api/requests')
-        .set('Authorization', `Bearer ${token2}`)
-        .send({ bed_id: bed._id.toString() });
+      const second = await request(app).post('/api/requests').set('Authorization', `Bearer ${token}`).send({ bed_id: bed._id.toString() });
       expect(second.status).toBe(409);
     });
 
-    it('should reject requesting a bed that is not available (e.g. occupied)', async () => {
+    it('REWRITTEN (was: "reject requesting a bed that is not available"): still rejects creating a request for a genuinely occupied bed — unchanged behavior, still true under the new design', async () => {
       const { ownerId } = await createOwner();
       const { bed } = await createBedFixture(ownerId, { status: BED_STATUS.OCCUPIED });
       const { token } = await createStudent();
@@ -219,6 +268,25 @@ describe('Booking Engine (Requests & Rentals) — Integration Tests', () => {
         .send({ bed_id: bed._id.toString() });
 
       expect(res.status).toBe(409);
+    });
+
+    it('NEW: rejects confirming a request whose bed already went to another confirmed booking (the AVAILABLE->OCCUPIED guard doing its job)', async () => {
+      const { ownerId, token: ownerToken } = await createOwner();
+      const { bed } = await createBedFixture(ownerId);
+      const { token: token1 } = await createStudent();
+      const { token: token2 } = await createStudent();
+
+      const res1 = await request(app).post('/api/requests').set('Authorization', `Bearer ${token1}`).send({ bed_id: bed._id.toString() });
+      const res2 = await request(app).post('/api/requests').set('Authorization', `Bearer ${token2}`).send({ bed_id: bed._id.toString() });
+
+      const confirm1 = await request(app).post(`/api/requests/${res1.body.data._id}/confirm`).set('Authorization', `Bearer ${ownerToken}`);
+      expect(confirm1.status).toBe(200);
+
+      // res2's request is now bed_taken (auto-marked), so confirming it
+      // hits the "not pending" guard, not the bed-availability guard — but
+      // either way it must fail with a conflict.
+      const confirm2 = await request(app).post(`/api/requests/${res2.body.data._id}/confirm`).set('Authorization', `Bearer ${ownerToken}`);
+      expect(confirm2.status).toBe(409);
     });
   });
 

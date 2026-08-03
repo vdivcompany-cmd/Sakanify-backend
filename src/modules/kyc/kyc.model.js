@@ -99,6 +99,12 @@ const kycSchema = new mongoose.Schema(
 // --- Indexes (defined alongside the model, per CLAUDE.md Section 4.1) ---
 kycSchema.index({ student: 1 }, { unique: true });
 kycSchema.index({ verification_status: 1 });
+// Phase 9 addition (Docs/phase-9-booking-behavior-bulk-registration.md,
+// Part A, Product Decision 8): stops the same real person creating
+// multiple student accounts (with different phone numbers) specifically
+// to bypass the one-active-rental-per-student guarantee above —
+// no two student accounts may ever share the same National ID number.
+kycSchema.index({ national_id_number: 1 }, { unique: true });
 
 kycSchema.pre('save', function (next) {
   this.updated_at = new Date();

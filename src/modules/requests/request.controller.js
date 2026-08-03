@@ -15,6 +15,7 @@
 const { success, error } = require('../../shared/utils/response.util');
 const requestService = require('./request.service');
 const studentService = require('../students/student.service');
+const behaviorReportService = require('../behavior-reports/behavior-report.service');
 const { ownershipScoping } = require('../../middleware/auth.middleware');
 const { parsePagination, buildMeta } = require('../../shared/utils/pagination.util');
 const { REQUEST_REJECTION_REASON } = require('../../config/constants.config');
@@ -80,7 +81,10 @@ async function createRequest(req, res) {
       note: note ? String(note).trim() : null,
     });
 
-    return success(res, { statusCode: 201, message: 'Request created — bed locked pending owner review', data: request });
+    // Phase 9 (Part A redesign): creation no longer locks the bed — many
+    // students may hold a pending viewing-booking for the same bed at
+    // once. The bed is only actually claimed when the owner confirms.
+    return success(res, { statusCode: 201, message: 'Viewing booking created — the owner will review it', data: request });
   } catch (err) {
     return handleControllerError(res, err, 'createRequest');
   }
@@ -185,7 +189,7 @@ async function rejectRequest(req, res) {
       return error(res, { statusCode: 403, message: scopeErr.message });
     }
 
-    const { reason, note } = req.body;
+    const { reason, note, behavior_report_ids: behaviorReportIds } = req.body;
     if (!reason || !Object.values(REQUEST_REJECTION_REASON).includes(reason)) {
       return error(res, {
         statusCode: 422,
@@ -196,11 +200,60 @@ async function rejectRequest(req, res) {
     const updated = await requestService.rejectRequest(req.params.requestId, req.user.userId, {
       reason,
       note: note ? String(note).trim() : null,
+      behaviorReportIds: Array.isArray(behaviorReportIds) ? behaviorReportIds : [],
     });
 
-    return success(res, { statusCode: 200, message: 'Request rejected — bed released', data: updated });
+    // Phase 9, Part C/A tie-in (implementation step 4): when the owner
+    // flags this rejection with behavior_report_ids, also return the
+    // student's/guardian's phone numbers plus a suggested message
+    // template — content the owner copies and sends manually via their
+    // own WhatsApp/SMS (Product Decision 3: this never sends anything
+    // itself). Best-effort — a failure composing the template must never
+    // block the rejection itself, which is already durably saved above.
+    let contactTemplate = null;
+    if (Array.isArray(behaviorReportIds) && behaviorReportIds.length > 0) {
+      try {
+        const { student } = await studentService.getFullProfileWithKyc(request.student);
+        contactTemplate = behaviorReportService.buildContactTemplate(student, reason);
+      } catch (templateErr) {
+        console.error('[request.controller:rejectRequest] Failed to build contact template', templateErr);
+      }
+    }
+
+    return success(res, {
+      statusCode: 200,
+      message: 'Request rejected',
+      data: contactTemplate ? { ...updated.toObject(), contact_template: contactTemplate } : updated,
+    });
   } catch (err) {
     return handleControllerError(res, err, 'rejectRequest');
+  }
+}
+
+/**
+ * POST /api/requests/:requestId/appointment-date
+ * Owner only, ownership-scoped. Body: { appointment_date }
+ */
+async function setAppointmentDate(req, res) {
+  try {
+    const request = await requestService.getRequestById(req.params.requestId);
+
+    try {
+      ownershipScoping(req.user.ownerId, request.owner_id);
+    } catch (scopeErr) {
+      return error(res, { statusCode: 403, message: scopeErr.message });
+    }
+
+    const errors = [];
+    const appointmentDate = parseOptionalDate(req.body.appointment_date, 'appointment_date', errors);
+    if (!appointmentDate || errors.length > 0) {
+      return error(res, { statusCode: 422, message: 'appointment_date is required and must be a valid date', errors });
+    }
+
+    const updated = await requestService.setAppointmentDate(req.params.requestId, req.user.userId, appointmentDate);
+    return success(res, { statusCode: 200, message: 'Appointment date set', data: updated });
+  } catch (err) {
+    return handleControllerError(res, err, 'setAppointmentDate');
   }
 }
 
@@ -210,4 +263,5 @@ module.exports = {
   listPending,
   confirmRequest,
   rejectRequest,
+  setAppointmentDate,
 };

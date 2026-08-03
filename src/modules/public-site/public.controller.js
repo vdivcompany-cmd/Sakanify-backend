@@ -63,6 +63,20 @@ async function getBuildingDetail(req, res) {
 }
 
 /**
+ * GET /api/public/buildings/:buildingId/beds
+ * Public, unauthenticated (Phase 9, Part A/B — the public bed-picker /
+ * roommate-college-visibility endpoint).
+ */
+async function listBuildingBeds(req, res) {
+  try {
+    const beds = await publicService.listPublicBedsForBuilding(req.params.buildingId);
+    return success(res, { statusCode: 200, message: 'Beds retrieved', data: beds });
+  } catch (err) {
+    return handleControllerError(res, err, 'listBuildingBeds');
+  }
+}
+
+/**
  * POST /api/public/leads
  * Public, unauthenticated, IP rate-limited more strictly than the read
  * endpoints (see public.routes.js). Body: { name, phone, note?, bed_id }
@@ -144,6 +158,7 @@ async function getMyLead(req, res) {
 module.exports = {
   listBuildings,
   getBuildingDetail,
+  listBuildingBeds,
   submitLead,
   getTransparencyCounters,
   listMyLeads,

@@ -46,4 +46,10 @@ router.post('/:requestId/confirm', requireRole(ROLES.OWNER), requestController.c
  */
 router.post('/:requestId/reject', requireRole(ROLES.OWNER), requestController.rejectRequest);
 
+/**
+ * POST /api/requests/:requestId/appointment-date
+ * Owner only, ownership-scoped (Phase 9, Part A, Product Decision 6).
+ */
+router.post('/:requestId/appointment-date', requireRole(ROLES.OWNER), requestController.setAppointmentDate);
+
 module.exports = router;

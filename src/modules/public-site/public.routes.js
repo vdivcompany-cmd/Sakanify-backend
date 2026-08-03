@@ -67,6 +67,8 @@ const leadLimiter = rateLimit({
 // --- Public, unauthenticated endpoints ---
 router.get('/buildings', browsingLimiter, publicController.listBuildings);
 router.get('/buildings/:buildingId', browsingLimiter, publicController.getBuildingDetail);
+// Phase 9, Part A/B: public bed-picker / roommate-college visibility.
+router.get('/buildings/:buildingId/beds', browsingLimiter, publicController.listBuildingBeds);
 router.get('/counters', browsingLimiter, publicController.getTransparencyCounters);
 router.post('/leads', leadLimiter, publicController.submitLead);
 

@@ -190,6 +190,15 @@ async function listAllBedsForApartments(apartmentIds) {
   return bedRepository.findAllByApartmentIds(apartmentIds);
 }
 
+/**
+ * Phase 9 addition (Part A/B, public bed-picker endpoint) — every bed in
+ * a building, used by public.service to build the "pick your bed" list
+ * (available beds) and the roommate-college view (occupied beds).
+ */
+async function listAllBedsForBuilding(buildingId) {
+  return bedRepository.findAllByBuilding(buildingId);
+}
+
 module.exports = {
   createBed,
   countBedsForOwner,
@@ -202,4 +211,5 @@ module.exports = {
   deleteBed,
   computeOccupancy,
   listAllBedsForApartments,
+  listAllBedsForBuilding,
 };

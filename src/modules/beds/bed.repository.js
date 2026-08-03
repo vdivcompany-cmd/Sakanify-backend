@@ -52,6 +52,14 @@ function findAllByApartmentIds(apartmentIds) {
   return Bed.find({ apartment: { $in: apartmentIds } }).sort({ created_at: -1 });
 }
 
+// Phase 9 addition (Part A/B, public bed-picker endpoint): every bed under
+// a single building, regardless of which apartment it's in — one query,
+// using the denormalized `building` field on Bed (Phase 3) rather than
+// resolving apartments first (CLAUDE.md Section 4.4).
+function findAllByBuilding(buildingId) {
+  return Bed.find({ building: buildingId }).sort({ created_at: 1 });
+}
+
 function updateById(bedId, updates) {
   return Bed.findByIdAndUpdate(bedId, { $set: updates }, { new: true, runValidators: true });
 }
@@ -105,6 +113,7 @@ module.exports = {
   countByOwner,
   countByOwnerIds,
   findAllByApartmentIds,
+  findAllByBuilding,
   updateById,
   conditionalUpdateStatus,
   deleteById,

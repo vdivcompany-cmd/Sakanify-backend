@@ -92,6 +92,21 @@ const studentSchema = new mongoose.Schema(
       required: true,
     },
 
+    // Phase 9 addition (Docs/phase-9-booking-behavior-bulk-registration.md,
+    // Part C, Product Decision 3 — "returns the student's and guardian's
+    // phone numbers"). Optional: a student who never provides one simply
+    // has this field null, which behavior-report.service must handle
+    // gracefully (omit from the generated message template rather than
+    // erroring). This is a schema change to an already-closed Phase 2
+    // model — flagged explicitly in the Phase 9 report per CLAUDE.md
+    // Section 7.4, resolved by the project owner as the recommended
+    // option when asked directly.
+    guardian_phone: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+
     // --- Timestamps ---
     created_at: {
       type: Date,
