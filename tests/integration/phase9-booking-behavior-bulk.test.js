@@ -67,6 +67,13 @@ async function createOwner() {
 
 async function createStudent(overrides = {}) {
   const tag = uniqueTag();
+  // Same test-data-generation fix as booking-engine.test.js's
+  // createStudent() (see that file's comment for the full mechanism):
+  // capture the counter synchronously, before any `await`, so it can never
+  // collide with another createStudent() call in the same Promise.all
+  // batch. The product's national_id_number uniqueness constraint is
+  // correct and untouched — this was purely a stale-read bug in test data.
+  const nationalIdSeq = uniqueCounter;
   const user = await User.create({
     phone: `+2010${String(Math.floor(Math.random() * 100000000)).padStart(8, '0')}`,
     role: ROLES.STUDENT,
@@ -83,7 +90,7 @@ async function createStudent(overrides = {}) {
   });
   await Kyc.create({
     student: student._id,
-    national_id_number: `2990101${String(uniqueCounter).padStart(7, '0')}`,
+    national_id_number: `2990101${String(nationalIdSeq).padStart(7, '0')}`,
     national_id_photo: 'kyc/fake-id.png',
     student_photo: 'kyc/fake-photo.png',
   });

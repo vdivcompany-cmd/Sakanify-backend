@@ -76,6 +76,21 @@ async function createSuperAdmin() {
  * so this file can focus on request/rental logic. */
 async function createStudent() {
   const tag = uniqueTag();
+  // Bug fix (Phase 9 follow-up): captured HERE, synchronously, immediately
+  // after uniqueTag() and before any `await` — JS runs each call's
+  // synchronous prefix to completion before another queued createStudent()
+  // call gets a turn, so no two concurrent calls can ever observe the same
+  // `uniqueCounter` value at this point. The previous version instead
+  // re-read the live `uniqueCounter` variable directly inside the
+  // Kyc.create() call below, AFTER two awaits (User.create, Student.create)
+  // — by then, other in-flight createStudent() calls from the same
+  // Promise.all batch had already advanced the shared counter past this
+  // call's own value, so two calls could read the same stale number and
+  // collide on national_id_number's new Phase 9 unique index
+  // (E11000 duplicate key on kyc_records.national_id_number_1). This was
+  // purely a test-data-generation bug — the uniqueness constraint itself
+  // is correct and was not touched.
+  const nationalIdSeq = uniqueCounter;
   const user = await User.create({
     phone: `+2010${String(Math.floor(Math.random() * 100000000)).padStart(8, '0')}`,
     role: ROLES.STUDENT,
@@ -91,7 +106,7 @@ async function createStudent() {
   });
   await Kyc.create({
     student: student._id,
-    national_id_number: `2990101${String(uniqueCounter).padStart(7, '0')}`,
+    national_id_number: `2990101${String(nationalIdSeq).padStart(7, '0')}`,
     national_id_photo: 'kyc/fake-id.png',
     student_photo: 'kyc/fake-photo.png',
   });
